@@ -1,0 +1,589 @@
+import * as THREE from 'three';
+import { Team, TEAM_COLORS, WeaponSpec } from './config';
+
+export interface Fighter {
+  id: number;
+  team: Team;
+  isPlayer: boolean;
+  group: THREE.Group;
+  velocity: THREE.Vector3;
+  health: number;
+  ammo: number;
+  alive: boolean;
+  respawnAt: number;
+  spawn: THREE.Vector3;
+  fireCooldown: number;
+  thinkCooldown: number;
+  aiTarget: THREE.Vector3;
+  aiMode: 'paint' | 'fight' | 'retreat';
+  weapon: WeaponSpec;
+  score: number;
+  hitFlash: number;
+  recoil: number;
+  spawnPulse: number;
+  verticalVelocity: number;
+  grounded: boolean;
+  landingPulse: number;
+  previousGrounded: boolean;
+  swim: boolean;
+  swimLevel: number;
+  aiCommitUntil: number;
+  aiLastProductivePaintAt: number;
+  aiNextPaintShotAt: number;
+  aiPaintShots: number;
+  aiFightShots: number;
+  aiProductivePaintCells: number;
+  lastRollerPaintX: number;
+  lastRollerPaintZ: number;
+}
+
+interface FighterRig {
+  visual: THREE.Group;
+  torso: THREE.Group;
+  head: THREE.Group;
+  hair: THREE.Group;
+  leftEye: THREE.Group;
+  rightEye: THREE.Group;
+  leftArm: THREE.Group;
+  rightArm: THREE.Group;
+  leftLeg: THREE.Group;
+  rightLeg: THREE.Group;
+  weapon: THREE.Group;
+  backpack: THREE.Group;
+  tankInk: THREE.Mesh;
+  blobShadow: THREE.Mesh;
+  ring: THREE.Mesh;
+}
+
+const outlineMaterial = new THREE.MeshBasicMaterial({ color: 0x18303d, side: THREE.BackSide });
+const localVelocityScratch = new THREE.Vector3();
+const upAxis = new THREE.Vector3(0, 1, 0);
+const toonRamp = (() => {
+  const data = new Uint8Array([
+    58, 62, 76,
+    138, 144, 158,
+    222, 226, 234,
+    255, 255, 255
+  ]);
+  const texture = new THREE.DataTexture(data, 4, 1, THREE.RGBFormat);
+  texture.needsUpdate = true;
+  texture.minFilter = THREE.NearestFilter;
+  texture.magFilter = THREE.NearestFilter;
+  return texture;
+})();
+
+function toonMaterial(color: number) {
+  return new THREE.MeshToonMaterial({ color, gradientMap: toonRamp });
+}
+
+function glossMaterial(color: number) {
+  return new THREE.MeshPhysicalMaterial({ color, roughness: 0.12, metalness: 0.02, clearcoat: 1, clearcoatRoughness: 0.07 });
+}
+
+function outlinedMesh(geometry: THREE.BufferGeometry, material: THREE.Material, outlineScale = 1.04) {
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  const outline = new THREE.Mesh(geometry, outlineMaterial);
+  outline.scale.setScalar(outlineScale);
+  mesh.add(outline);
+  return mesh;
+}
+
+function roundedBox(width: number, height: number, depth: number, material: THREE.Material) {
+  const mesh = outlinedMesh(new THREE.BoxGeometry(width, height, depth, 2, 2, 2), material, 1.035);
+  mesh.geometry.computeVertexNormals();
+  return mesh;
+}
+
+function makeLimb(length: number, radius: number, material: THREE.Material) {
+  const pivot = new THREE.Group();
+  const limb = outlinedMesh(new THREE.CapsuleGeometry(radius, length, 4, 8), material);
+  limb.position.y = -length * 0.5;
+  pivot.add(limb);
+  return pivot;
+}
+
+function makeWeapon(spec: WeaponSpec, accent: THREE.Material, dark: THREE.Material, teamColor: number) {
+  const root = new THREE.Group();
+  const paintMat = glossMaterial(teamColor);
+
+  if (spec.id === 'roller') {
+    const handle = outlinedMesh(new THREE.CylinderGeometry(0.05, 0.065, 0.85, 8), dark);
+    handle.rotation.x = Math.PI / 2.8;
+    handle.position.set(0, 0.02, 0.18);
+    root.add(handle);
+    const roller = outlinedMesh(new THREE.CylinderGeometry(0.26, 0.26, 0.8, 12), paintMat);
+    roller.rotation.z = Math.PI / 2;
+    roller.position.set(0, -0.28, 0.82);
+    root.add(roller);
+    for (const x of [-0.44, 0.44]) {
+      const cap = outlinedMesh(new THREE.CylinderGeometry(0.29, 0.29, 0.06, 12), accent);
+      cap.rotation.z = Math.PI / 2;
+      cap.position.set(x, -0.28, 0.82);
+      root.add(cap);
+    }
+  } else if (spec.id === 'bucket') {
+    const bowl = outlinedMesh(new THREE.CylinderGeometry(0.36, 0.27, 0.44, 12, 1, true), accent);
+    bowl.position.set(0, -0.04, 0.38);
+    bowl.rotation.x = -0.18;
+    root.add(bowl);
+    const paint = new THREE.Mesh(new THREE.CircleGeometry(0.28, 12), paintMat);
+    paint.rotation.x = -Math.PI / 2 - 0.18;
+    paint.position.set(0, 0.19, 0.45);
+    root.add(paint);
+    const handle = outlinedMesh(new THREE.TorusGeometry(0.32, 0.045, 7, 14, Math.PI), dark);
+    handle.position.set(0, 0.24, 0.3);
+    root.add(handle);
+    const strap = roundedBox(0.5, 0.07, 0.07, dark);
+    strap.position.set(0, -0.02, 0.12);
+    root.add(strap);
+  } else if (spec.id === 'burst') {
+    const body = outlinedMesh(new THREE.SphereGeometry(0.3, 12, 8), accent);
+    body.scale.set(1, 0.84, 1.24);
+    body.position.z = 0.3;
+    root.add(body);
+    const chamber = outlinedMesh(new THREE.SphereGeometry(0.21, 12, 8), paintMat);
+    chamber.position.set(0, 0.06, 0.66);
+    root.add(chamber);
+    const nozzle = outlinedMesh(new THREE.CylinderGeometry(0.09, 0.14, 0.25, 9), dark);
+    nozzle.rotation.x = Math.PI / 2;
+    nozzle.position.z = 0.95;
+    root.add(nozzle);
+    const fin = roundedBox(0.1, 0.24, 0.3, accent);
+    fin.position.set(0, 0.3, 0.22);
+    root.add(fin);
+  } else {
+    const body = outlinedMesh(new THREE.CapsuleGeometry(0.17, 0.5, 4, 9), accent);
+    body.rotation.x = Math.PI / 2;
+    body.position.z = 0.36;
+    root.add(body);
+    const tank = outlinedMesh(new THREE.SphereGeometry(0.21, 10, 7), paintMat);
+    tank.scale.set(0.9, 1.05, 1.3);
+    tank.position.set(0, 0.13, 0.22);
+    root.add(tank);
+    const nozzle = outlinedMesh(new THREE.CylinderGeometry(0.085, 0.125, 0.32, 9), dark);
+    nozzle.rotation.x = Math.PI / 2;
+    nozzle.position.z = 0.84;
+    root.add(nozzle);
+    const grip = roundedBox(0.12, 0.24, 0.12, dark);
+    grip.position.set(0, -0.2, 0.3);
+    grip.rotation.x = 0.3;
+    root.add(grip);
+  }
+  return root;
+}
+
+export function createFighter(
+  id: number,
+  team: Team,
+  isPlayer: boolean,
+  weaponSpec: WeaponSpec,
+  spawn: THREE.Vector3,
+  outfitPrimary?: string,
+  outfitAccent?: string
+): Fighter {
+  const group = new THREE.Group();
+  const visual = new THREE.Group();
+  group.add(visual);
+  visual.scale.set(0.86, 1.03, 0.86);
+
+  const colors = TEAM_COLORS[team];
+  const primary = outfitPrimary ? new THREE.Color(outfitPrimary).getHex() : team === 'cyan' ? 0x27475c : 0x5e3a4c;
+  const accentColor = outfitAccent ? new THREE.Color(outfitAccent).getHex() : colors.main;
+  const jacketMat = toonMaterial(primary);
+  const accentMat = toonMaterial(accentColor);
+  const darkMat = toonMaterial(0x232f40);
+  const shortsMat = toonMaterial(0x2e3a50);
+  const skinMat = toonMaterial(team === 'cyan' ? 0xffcfae : 0xe9ad84);
+  const whiteMat = toonMaterial(0xf7fcff);
+  const irisMat = new THREE.MeshBasicMaterial({ color: team === 'cyan' ? 0x123c46 : 0x4a1c24 });
+  const glossWhite = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  // Puffy glossy "ink-blob" hair liquid: original, but reads wet like Splatoon hair.
+  const hairMat = glossMaterial(team === 'cyan' ? 0x0fb5bd : 0xd94a15);
+  const hairTipMat = glossMaterial(team === 'cyan' ? 0x8cfff5 : 0xffbd70);
+
+  // Torso: short, compact, hoodie-wearing.
+  const torso = new THREE.Group();
+  torso.position.y = 1.0;
+  visual.add(torso);
+
+  const hoodie = outlinedMesh(new THREE.CapsuleGeometry(0.43, 0.4, 5, 10), jacketMat);
+  hoodie.scale.set(1.06, 1, 0.84);
+  torso.add(hoodie);
+  const zipper = roundedBox(0.05, 0.5, 0.035, accentMat);
+  zipper.position.set(0, 0, 0.39);
+  torso.add(zipper);
+  const pocket = roundedBox(0.44, 0.16, 0.06, accentMat);
+  pocket.position.set(0, -0.2, 0.37);
+  torso.add(pocket);
+  const hood = outlinedMesh(new THREE.TorusGeometry(0.3, 0.09, 7, 14, Math.PI * 1.55), jacketMat);
+  hood.rotation.z = Math.PI * 0.225;
+  hood.position.set(0, 0.32, -0.1);
+  torso.add(hood);
+
+  const shorts = outlinedMesh(new THREE.SphereGeometry(0.42, 10, 7), shortsMat);
+  shorts.scale.set(1.05, 0.44, 0.85);
+  shorts.position.y = -0.44;
+  torso.add(shorts);
+  for (const x of [-0.24, 0.24]) {
+    const cuff = outlinedMesh(new THREE.TorusGeometry(0.15, 0.038, 6, 10), accentMat);
+    cuff.rotation.x = Math.PI / 2;
+    cuff.position.set(x, -0.57, 0.02);
+    torso.add(cuff);
+  }
+
+  // Head: big, round, expressive.
+  const head = new THREE.Group();
+  head.position.y = 1.74;
+  visual.add(head);
+
+  const face = outlinedMesh(new THREE.SphereGeometry(0.55, 16, 12), skinMat, 1.045);
+  face.scale.set(0.94, 0.9, 0.9);
+  head.add(face);
+
+  // Big oval eyes with sclera, dark iris and double catchlight.
+  const makeEye = (side: number) => {
+    const eye = new THREE.Group();
+    const sclera = outlinedMesh(new THREE.SphereGeometry(0.13, 12, 9), glossWhite, 1.02);
+    sclera.scale.set(0.82, 1, 0.36);
+    eye.add(sclera);
+    const iris = new THREE.Mesh(new THREE.SphereGeometry(0.085, 10, 8), irisMat);
+    iris.scale.set(0.78, 1, 0.3);
+    iris.position.z = 0.028;
+    eye.add(iris);
+    const spark1 = new THREE.Mesh(new THREE.SphereGeometry(0.032, 6, 5), glossWhite);
+    spark1.position.set(-0.014, 0.045, 0.05);
+    eye.add(spark1);
+    const spark2 = new THREE.Mesh(new THREE.SphereGeometry(0.017, 6, 5), glossWhite);
+    spark2.position.set(0.03, -0.015, 0.05);
+    eye.add(spark2);
+    const brow = roundedBox(0.14, 0.035, 0.03, darkMat);
+    brow.position.set(side * 0.01, 0.16, 0.02);
+    brow.rotation.z = -side * 0.12;
+    eye.add(brow);
+    eye.position.set(side * 0.2, 0.08, 0.45);
+    return eye;
+  };
+  const leftEye = makeEye(-1);
+  const rightEye = makeEye(1);
+  head.add(leftEye, rightEye);
+
+  // Original two-stripe face paint under the eyes.
+  for (const side of [-1, 1]) {
+    const stripe = new THREE.Mesh(new THREE.CapsuleGeometry(0.018, 0.1, 3, 6), new THREE.MeshBasicMaterial({ color: colors.main }));
+    stripe.position.set(side * 0.28, -0.05, 0.47);
+    stripe.rotation.z = side * 1.2;
+    stripe.rotation.x = 0.25;
+    head.add(stripe);
+    const cheek = new THREE.Mesh(new THREE.SphereGeometry(0.065, 8, 5), new THREE.MeshBasicMaterial({ color: 0xff8d9b, transparent: true, opacity: 0.5 }));
+    cheek.scale.set(1, 0.45, 0.25);
+    cheek.position.set(side * 0.36, -0.14, 0.44);
+    head.add(cheek);
+  }
+  // Open happy smile.
+  const smile = new THREE.Mesh(new THREE.SphereGeometry(0.085, 10, 6), darkMat);
+  smile.scale.set(1.15, 0.55, 0.3);
+  smile.position.set(0, -0.13, 0.475);
+  head.add(smile);
+  const tongue = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 5), new THREE.MeshBasicMaterial({ color: 0xff8fa0 }));
+  tongue.scale.set(1.1, 0.5, 0.3);
+  tongue.position.set(0, -0.155, 0.485);
+  head.add(tongue);
+
+  // Puffy blob hair: cap + five dangling glossy locks with bright tips.
+  const hair = new THREE.Group();
+  head.add(hair);
+  const hairCap = outlinedMesh(new THREE.SphereGeometry(0.56, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.52), hairMat);
+  hairCap.scale.set(0.98, 0.8, 0.98);
+  hairCap.position.y = 0.14;
+  hair.add(hairCap);
+  const lockLayout: Array<[number, number, number, number, number]> = [
+    [0, -0.02, -0.42, 0, -0.12],
+    [-0.34, -0.06, -0.3, 0.42, -0.2],
+    [0.34, -0.06, -0.3, -0.42, -0.2],
+    [-0.46, -0.08, 0.08, 0.9, -0.05],
+    [0.46, -0.08, 0.08, -0.9, -0.05]
+  ];
+  for (const [x, y, z, rz, rx] of lockLayout) {
+    const lock = outlinedMesh(new THREE.CapsuleGeometry(0.13, 0.3, 3, 8), hairMat);
+    lock.position.set(x, y, z);
+    lock.rotation.z = rz;
+    lock.rotation.x = rx;
+    hair.add(lock);
+    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), hairTipMat);
+    tip.position.set(x + Math.sin(-rz) * 0.22, y - 0.24, z + Math.sin(rx) * 0.2);
+    tip.scale.set(1, 1.25, 1);
+    hair.add(tip);
+  }
+  // Front bangs.
+  for (const x of [-0.22, 0, 0.22]) {
+    const bang = outlinedMesh(new THREE.CapsuleGeometry(0.09, 0.2, 3, 7), hairMat);
+    bang.position.set(x, 0.32, 0.39);
+    bang.rotation.x = 0.45;
+    bang.rotation.z = -x * 1.1;
+    hair.add(bang);
+  }
+
+  // Arms: right arm holds the weapon forward, left arm supports it.
+  const leftArm = makeLimb(0.5, 0.1, jacketMat);
+  leftArm.position.set(-0.44, 1.28, 0.02);
+  visual.add(leftArm);
+  const rightArm = makeLimb(0.5, 0.1, jacketMat);
+  rightArm.position.set(0.44, 1.28, 0.02);
+  visual.add(rightArm);
+  for (const arm of [leftArm, rightArm]) {
+    const hand = outlinedMesh(new THREE.SphereGeometry(0.14, 9, 7), skinMat);
+    hand.position.y = -0.5;
+    arm.add(hand);
+  }
+
+  // Legs and chunky sneakers.
+  const leftLeg = makeLimb(0.5, 0.105, skinMat);
+  leftLeg.position.set(-0.18, 0.61, 0);
+  visual.add(leftLeg);
+  const rightLeg = makeLimb(0.5, 0.105, skinMat);
+  rightLeg.position.set(0.18, 0.61, 0);
+  visual.add(rightLeg);
+  for (const [leg, side] of [[leftLeg, -1], [rightLeg, 1]] as const) {
+    const sock = roundedBox(0.24, 0.18, 0.24, whiteMat);
+    sock.position.y = -0.42;
+    leg.add(sock);
+    const shoe = outlinedMesh(new THREE.CapsuleGeometry(0.19, 0.26, 4, 8), whiteMat);
+    shoe.rotation.x = Math.PI / 2;
+    shoe.position.set(side * 0.01, -0.53, 0.18);
+    leg.add(shoe);
+    const sole = roundedBox(0.3, 0.12, 0.42, accentMat);
+    sole.position.set(side * 0.01, -0.6, 0.16);
+    leg.add(sole);
+    const toe = roundedBox(0.27, 0.14, 0.18, accentMat);
+    toe.position.set(side * 0.01, -0.55, 0.34);
+    leg.add(toe);
+    const lace = roundedBox(0.16, 0.05, 0.22, darkMat);
+    lace.position.set(side * 0.01, -0.44, 0.2);
+    leg.add(lace);
+  }
+
+  // Backpack ink tank with a visible liquid level.
+  const backpack = new THREE.Group();
+  backpack.position.set(0, 1.14, -0.42);
+  visual.add(backpack);
+  const packBody = outlinedMesh(new THREE.CapsuleGeometry(0.3, 0.38, 4, 9), darkMat);
+  packBody.rotation.x = 0.1;
+  backpack.add(packBody);
+  const tankShell = new THREE.Mesh(
+    new THREE.CapsuleGeometry(0.19, 0.32, 4, 10),
+    new THREE.MeshPhysicalMaterial({ color: 0xffffff, transparent: true, opacity: 0.32, roughness: 0.05, clearcoat: 1, clearcoatRoughness: 0.05 })
+  );
+  tankShell.position.z = -0.14;
+  backpack.add(tankShell);
+  const tankInk = new THREE.Mesh(new THREE.CapsuleGeometry(0.155, 0.27, 4, 10), glossMaterial(colors.main));
+  tankInk.position.z = -0.14;
+  backpack.add(tankInk);
+  const cap = outlinedMesh(new THREE.CylinderGeometry(0.09, 0.11, 0.13, 8), accentMat);
+  cap.position.set(0, 0.36, -0.13);
+  backpack.add(cap);
+
+  // Weapon held in the right hand, aimed forward.
+  const weapon = makeWeapon(weaponSpec, accentMat, darkMat, colors.main);
+  weapon.position.set(0.42, 1.04, 0.48);
+  weapon.rotation.set(-0.12, -0.12, 0);
+  visual.add(weapon);
+  rightArm.rotation.set(-1.18, 0, -0.22);
+  leftArm.rotation.set(-0.95, 0, 0.42);
+
+  // Team ring + soft blob shadow.
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(0.58, 0.7, 28),
+    new THREE.MeshBasicMaterial({ color: colors.main, transparent: true, opacity: isPlayer ? 0.75 : 0.3, side: THREE.DoubleSide, depthWrite: false })
+  );
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.04;
+  group.add(ring);
+  const blobShadow = new THREE.Mesh(
+    new THREE.CircleGeometry(0.55, 20),
+    new THREE.MeshBasicMaterial({ color: 0x132530, transparent: true, opacity: 0.34, depthWrite: false })
+  );
+  blobShadow.rotation.x = -Math.PI / 2;
+  blobShadow.position.y = 0.03;
+  group.add(blobShadow);
+
+  group.position.copy(spawn);
+  group.userData.fighterId = id;
+  group.userData.rig = { visual, torso, head, hair, leftEye, rightEye, leftArm, rightArm, leftLeg, rightLeg, weapon, backpack, tankInk, blobShadow, ring } satisfies FighterRig;
+
+  return {
+    id,
+    team,
+    isPlayer,
+    group,
+    velocity: new THREE.Vector3(),
+    health: 100,
+    ammo: 100,
+    alive: true,
+    respawnAt: 0,
+    spawn: spawn.clone(),
+    fireCooldown: Math.random() * 0.4,
+    thinkCooldown: 0,
+    aiTarget: spawn.clone(),
+    aiMode: 'paint',
+    weapon: weaponSpec,
+    score: 0,
+    hitFlash: 0,
+    recoil: 0,
+    spawnPulse: 1,
+    verticalVelocity: 0,
+    grounded: true,
+    landingPulse: 0,
+    previousGrounded: true,
+    swim: false,
+    swimLevel: 0,
+    aiCommitUntil: 0,
+    aiLastProductivePaintAt: 0,
+    aiNextPaintShotAt: Math.random() * 0.3,
+    aiPaintShots: 0,
+    aiFightShots: 0,
+    aiProductivePaintCells: 0,
+    lastRollerPaintX: spawn.x,
+    lastRollerPaintZ: spawn.z
+  };
+}
+
+export function resetFighterPose(fighter: Fighter) {
+  const rig = fighter.group.userData.rig as FighterRig;
+  fighter.group.rotation.x = 0;
+  fighter.group.rotation.z = 0;
+  fighter.swim = false;
+  fighter.swimLevel = 0;
+  rig.visual.position.set(0, 0, 0);
+  rig.visual.rotation.set(0, 0, 0);
+  rig.visual.scale.set(0.86, 1.03, 0.86);
+  rig.torso.rotation.set(0, 0, 0);
+  rig.torso.scale.set(1, 1, 1);
+  rig.head.rotation.set(0, 0, 0);
+  rig.head.position.y = 1.74;
+  rig.hair.rotation.set(0, 0, 0);
+  rig.leftLeg.rotation.set(0, 0, -0.025);
+  rig.rightLeg.rotation.set(0, 0, 0.025);
+  rig.leftArm.rotation.set(-0.95, 0, 0.42);
+  rig.rightArm.rotation.set(-1.18, 0, -0.22);
+  rig.weapon.position.set(0.42, 1.04, 0.48);
+  rig.weapon.rotation.set(-0.12, -0.12, 0);
+  rig.backpack.rotation.set(0, 0, 0);
+}
+
+export function animateFighter(fighter: Fighter, time: number, speed: number, dt: number) {
+  const rig = fighter.group.userData.rig as FighterRig;
+  const phase = time * 10.5 + fighter.id * 0.9;
+  const moveAmount = THREE.MathUtils.smoothstep(speed, 0.2, 7.5);
+  const sprintAmount = THREE.MathUtils.smoothstep(speed, 6.6, 9.2);
+  const stride = Math.sin(phase) * moveAmount;
+  const bob = Math.abs(Math.sin(phase)) * 0.055 * moveAmount;
+  const idleBreath = Math.sin(time * 2.4 + fighter.id) * 0.02 * (1 - moveAmount);
+
+  const airborne = fighter.grounded ? 0 : 1;
+  const rise = THREE.MathUtils.clamp(fighter.verticalVelocity / 8.6, -1, 1);
+  const airTuck = airborne * (0.55 - rise * 0.12);
+  fighter.landingPulse = Math.max(0, fighter.landingPulse - dt * 5.5);
+  const landingSquash = Math.sin(fighter.landingPulse * Math.PI) * 0.13;
+
+  // Ink-swim: body dips into own ink while dashing through it.
+  fighter.swimLevel = THREE.MathUtils.lerp(fighter.swimLevel, fighter.swim ? 1 : 0, 1 - Math.pow(0.0005, dt));
+  const swim = fighter.swimLevel;
+  const swimKick = Math.sin(phase * 1.6) * swim;
+
+  rig.visual.position.y = bob + idleBreath - landingSquash * 0.12 - swim * 0.58;
+  rig.visual.rotation.x = THREE.MathUtils.lerp(
+    rig.visual.rotation.x,
+    -0.1 * sprintAmount - rise * 0.08 * airborne - swim * 0.42,
+    1 - Math.pow(0.001, dt)
+  );
+  rig.torso.rotation.y = Math.sin(phase) * 0.08 * moveAmount * (1 - airborne * 0.7) * (1 - swim);
+  rig.torso.rotation.z = -stride * 0.04 * (1 - airborne) * (1 - swim);
+  rig.torso.scale.y = 1 + idleBreath * 0.05 - landingSquash - swim * 0.14;
+  rig.torso.rotation.x = swim * 0.3;
+  rig.head.rotation.x = rise * 0.07 * airborne - swim * 0.42;
+  rig.hair.rotation.x = -bob * 0.8 + Math.sin(time * 3.2 + fighter.id) * 0.012 - rise * 0.08 * airborne + swim * 0.14;
+
+  if (swim > 0.08) {
+    // Paddle kick while gliding through ink.
+    rig.leftLeg.rotation.x = -0.35 + swimKick * 0.55;
+    rig.rightLeg.rotation.x = -0.35 - swimKick * 0.55;
+    rig.leftLeg.rotation.z = -0.18;
+    rig.rightLeg.rotation.z = 0.18;
+    rig.leftArm.rotation.x = -0.55 + swimKick * 0.3;
+    rig.rightArm.rotation.x = -0.7 - swimKick * 0.3;
+  } else {
+    rig.leftLeg.rotation.x = stride * 0.68 * (1 - airborne) - airTuck;
+    rig.rightLeg.rotation.x = -stride * 0.68 * (1 - airborne) - airTuck * 0.75;
+    rig.leftLeg.rotation.z = -0.025 - airborne * 0.12;
+    rig.rightLeg.rotation.z = 0.025 + airborne * 0.12;
+    rig.leftArm.rotation.x = -0.95 - stride * 0.14 * (1 - airborne) + airborne * 0.2;
+    rig.rightArm.rotation.x = -1.18 + stride * 0.1 * (1 - airborne) + airborne * 0.12;
+  }
+  rig.leftArm.rotation.z = 0.42;
+  rig.rightArm.rotation.z = -0.22;
+
+  const blink = Math.sin(time * 0.72 + fighter.id * 1.7) > 0.985 ? 0.12 : 1;
+  rig.leftEye.scale.y = blink;
+  rig.rightEye.scale.y = blink;
+
+  fighter.recoil = Math.max(0, fighter.recoil - dt * 8.5);
+  const kick = Math.sin(fighter.recoil * Math.PI) * 0.16;
+  rig.head.position.y = 1.74 - bob * 0.22 - landingSquash * 0.2 - swim * 0.3;
+  rig.hair.rotation.y = Math.sin(time * 2.6 + fighter.id) * 0.05 * (1 - swim);
+  rig.weapon.position.z = 0.48 - kick;
+  rig.weapon.rotation.x = -0.12 - kick * 0.6;
+  rig.rightArm.rotation.x -= kick * 0.5;
+  rig.backpack.rotation.x = Math.sin(phase) * 0.035 * moveAmount + swim * 0.2;
+
+  // Backpack ink level tracks ammo.
+  const inkRatio = THREE.MathUtils.clamp(fighter.ammo / 100, 0.12, 1);
+  rig.tankInk.scale.y = inkRatio;
+  rig.tankInk.position.y = -(1 - inkRatio) * 0.24;
+
+  const localVelocity = localVelocityScratch.copy(fighter.velocity).applyAxisAngle(upAxis, -fighter.group.rotation.y);
+  const sideStep = THREE.MathUtils.clamp(localVelocity.x / 7, -1, 1);
+  const forwardStep = THREE.MathUtils.clamp(localVelocity.z / 7, -1, 1);
+  const turnLean = THREE.MathUtils.clamp((fighter.group.rotation.y - rig.visual.rotation.y) * 0.12, -0.16, 0.16);
+  fighter.group.rotation.z = THREE.MathUtils.lerp(fighter.group.rotation.z, -localVelocity.x * 0.016, 1 - Math.pow(0.002, dt));
+  rig.head.rotation.y = THREE.MathUtils.lerp(rig.head.rotation.y, -sideStep * 0.16, 1 - Math.pow(0.01, dt));
+  rig.torso.rotation.y += sideStep * 0.13 + turnLean;
+  rig.weapon.rotation.y = -0.12 - sideStep * 0.08;
+  if (!fighter.grounded) {
+    const falling = fighter.verticalVelocity < 0;
+    rig.leftArm.rotation.z = 0.42 + (falling ? -0.38 : 0.28);
+    rig.rightArm.rotation.z = -0.22 + (falling ? 0.38 : -0.28);
+    rig.leftLeg.rotation.z = -0.18 - forwardStep * 0.08;
+    rig.rightLeg.rotation.z = 0.18 + forwardStep * 0.08;
+  } else if (sprintAmount > 0.25) {
+    rig.head.rotation.x -= sprintAmount * 0.08;
+    rig.leftArm.rotation.x -= stride * 0.22;
+    rig.rightArm.rotation.x += stride * 0.18;
+  }
+
+  // Blob shadow hugs the ground even mid-jump.
+  rig.blobShadow.position.y = -fighter.group.position.y + 0.045;
+  const shadowScale = THREE.MathUtils.clamp(1 - fighter.group.position.y * 0.22, 0.55, 1);
+  rig.blobShadow.scale.setScalar(shadowScale * (1 + swim * 0.35));
+  (rig.blobShadow.material as THREE.MeshBasicMaterial).opacity = 0.34 * shadowScale;
+
+  const ringMaterial = rig.ring.material as THREE.MeshBasicMaterial;
+  ringMaterial.opacity = (fighter.isPlayer ? 0.68 : 0.26) + Math.sin(time * 4 + fighter.id) * 0.07;
+  rig.ring.position.y = -fighter.group.position.y + 0.05;
+  rig.ring.scale.setScalar(1 + Math.sin(time * 4 + fighter.id) * 0.03 + swim * 0.22);
+
+  if (fighter.hitFlash > 0) {
+    fighter.hitFlash = Math.max(0, fighter.hitFlash - dt);
+    rig.visual.scale.setScalar(1 + Math.sin(fighter.hitFlash * 52) * 0.045);
+    rig.visual.rotation.z += Math.sin(fighter.hitFlash * 45) * 0.035;
+  } else if (fighter.spawnPulse > 0) {
+    fighter.spawnPulse = Math.max(0, fighter.spawnPulse - dt * 2.4);
+    const pop = 1 + Math.sin((1 - fighter.spawnPulse) * Math.PI) * 0.12;
+    rig.visual.scale.set(pop * 0.86, pop * 1.03, pop * 0.86);
+  } else {
+    const squashX = 0.86 * (1 + landingSquash * 0.5 + swim * 0.16);
+    const squashY = 1.03 * (1 - landingSquash * 0.65 - swim * 0.42);
+    rig.visual.scale.set(squashX, squashY, squashX);
+  }
+}
