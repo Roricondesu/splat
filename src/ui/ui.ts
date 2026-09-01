@@ -187,7 +187,7 @@ export class GameUI {
         <div class="damage-vignette" data-damage-vignette></div>
         <div class="hud-bottom-left">
           <div class="weapon-hud" aria-label="当前武器"><span class="weapon-glyph">${this.blasterIcon(weapon.color)}</span></div>
-          <div class="ammo-wrap" aria-label="颜料余量"><div class="ammo-label">${this.svgIcon('#b8ff3d', 25)}${this.svgDigits('100', { fill: '#b8ff3d', className: 'hud-digits ammo-digits', dataAttr: 'data-ammo-text' })}</div><i><b data-ammo></b></i></div>
+          <div class="ammo-ring" aria-label="颜料余量"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="42"></circle><circle data-ammo-ring cx="50" cy="50" r="42"></circle></svg>${this.svgIcon('#b8ff3d', 31)}${this.svgDigits('100', { fill: '#b8ff3d', className: 'hud-digits ammo-digits', dataAttr: 'data-ammo-text' })}</div>
         </div>
         <div class="health-ring" aria-label="生命值"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="42"></circle><circle data-health-ring cx="50" cy="50" r="42"></circle></svg>${this.healthIcon()}${this.svgDigits('100', { fill: '#ffffff', className: 'hud-digits health-digits', dataAttr: 'data-health' })}</div>
         ${spectating ? '' : `<div class="score-chip" aria-label="占地贡献">${this.turfIcon()}${this.svgDigits('0000', { fill: '#b8ff3d', className: 'hud-digits score-digits', dataAttr: 'data-score' })}</div>`}
@@ -222,7 +222,8 @@ export class GameUI {
     this.updateDigits(q<SVGSVGElement>('[data-time]'), `${Math.floor(stats.time / 60)}:${Math.floor(stats.time % 60).toString().padStart(2, '0')}`);
     q<HTMLElement>('[data-meter-cyan]')!.style.width = `${stats.cyan}%`;
     this.updateDigits(q<SVGSVGElement>('[data-ammo-text]'), `${Math.round(stats.ammo)}`);
-    q<HTMLElement>('[data-ammo]')!.style.width = `${stats.ammo}%`;
+    const ammoRatio = Math.max(0, Math.min(100, stats.ammo)) / 100;
+    q<SVGCircleElement>('[data-ammo-ring]')!.style.strokeDashoffset = `${264 - 264 * ammoRatio}`;
     this.updateDigits(q<SVGSVGElement>('[data-health]'), `${Math.max(0, Math.round(stats.health))}`);
     q<SVGCircleElement>('[data-health-ring]')!.style.strokeDashoffset = `${264 - 264 * Math.max(0, stats.health) / 100}`;
     if (!this.spectating) this.updateDigits(q<SVGSVGElement>('[data-score]'), Math.round(stats.score).toString().padStart(4, '0'));

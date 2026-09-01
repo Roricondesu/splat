@@ -55,6 +55,9 @@ try {
   if (gameTextNodes !== 0 || gameVisibleText.length !== 0) {
     throw new Error(`Game HUD still contains text: ${JSON.stringify({ gameTextNodes, gameVisibleText })}`);
   }
+  const ammoRing = await page.locator('[data-ammo-ring]').count();
+  const legacyAmmoBar = await page.locator('[data-ammo]').count();
+  if (ammoRing !== 1 || legacyAmmoBar !== 0) throw new Error(`Ammo HUD is not circular: ring=${ammoRing}, bar=${legacyAmmoBar}`);
   const timer = await page.locator('[data-time]').getAttribute('data-value');
   const beforeShot = await page.evaluate(() => Number(document.querySelector('[data-ammo-text]')?.getAttribute('data-value') || 0));
   const canvasBox = await page.locator('#game-canvas').boundingBox();
@@ -76,6 +79,16 @@ try {
   });
   await page.waitForTimeout(380);
   await page.keyboard.up('KeyW');
+  const beforePitch = await page.evaluate(() => window.__neonDebug?.state()?.cameraPitch);
+  await page.mouse.move(canvasBox.x + canvasBox.width / 2, canvasBox.y + canvasBox.height / 2);
+  await page.mouse.down({ button: 'right' });
+  await page.mouse.move(canvasBox.x + canvasBox.width / 2, canvasBox.y + canvasBox.height / 2 - 70, { steps: 5 });
+  await page.mouse.up({ button: 'right' });
+  await page.waitForTimeout(100);
+  const afterUpwardDragPitch = await page.evaluate(() => window.__neonDebug?.state()?.cameraPitch);
+  if (typeof beforePitch !== 'number' || typeof afterUpwardDragPitch !== 'number' || afterUpwardDragPitch >= beforePitch) {
+    throw new Error(`Vertical look direction is inverted: ${beforePitch} -> ${afterUpwardDragPitch}`);
+  }
   const beforeTurn = await page.evaluate(() => window.__neonDebug?.state());
   await page.mouse.move(canvasBox.x + canvasBox.width / 2, canvasBox.y + canvasBox.height / 2);
   await page.mouse.down({ button: 'right' });

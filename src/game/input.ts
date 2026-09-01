@@ -64,7 +64,7 @@ export class InputController {
       if (e.pointerId !== this.swipeLookId) return;
       e.preventDefault();
       this.state.lookX += (e.clientX - this.lastSwipeX) * 1.15;
-      this.state.lookY += (e.clientY - this.lastSwipeY) * 1.15;
+      this.state.lookY -= (e.clientY - this.lastSwipeY) * 1.15;
       this.lastSwipeX = e.clientX;
       this.lastSwipeY = e.clientY;
     });
