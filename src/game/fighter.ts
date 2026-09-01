@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { Team, TEAM_COLORS, WeaponSpec } from './config';
+import { OutfitSpec, Team, TEAM_COLORS, WeaponSpec } from './config';
 
 export interface Fighter {
   id: number;
@@ -259,8 +259,7 @@ export function createFighter(
   isPlayer: boolean,
   weaponSpec: WeaponSpec,
   spawn: THREE.Vector3,
-  outfitPrimary?: string,
-  outfitAccent?: string
+  outfit?: OutfitSpec
 ): Fighter {
   const group = new THREE.Group();
   const visual = new THREE.Group();
@@ -268,49 +267,53 @@ export function createFighter(
   visual.scale.set(BASE_VISUAL_SCALE_XZ, BASE_VISUAL_SCALE_Y, BASE_VISUAL_SCALE_XZ);
 
   const colors = TEAM_COLORS[team];
-  const primary = outfitPrimary ? new THREE.Color(outfitPrimary).getHex() : team === 'cyan' ? 0x27475c : 0x5e3a4c;
-  const accentColor = outfitAccent ? new THREE.Color(outfitAccent).getHex() : colors.main;
+  const primary = outfit ? new THREE.Color(outfit.primary).getHex() : team === 'cyan' ? 0x27475c : 0x5e3a4c;
+  const accentColor = outfit ? new THREE.Color(outfit.accent).getHex() : colors.main;
   const jacketMat = toonMaterial(primary);
   const accentMat = toonMaterial(accentColor);
   const darkMat = toonMaterial(0x232f40);
-  const shortsMat = toonMaterial(0x2e3a50);
+  const shortsMat = toonMaterial(outfit?.bottoms === 'skirt' ? accentColor : outfit?.bottoms === 'pants' ? 0x1d2a3a : 0x2e3a50);
   const skinMat = toonMaterial(team === 'cyan' ? 0xffcfae : 0xe9ad84);
   const whiteMat = toonMaterial(0xf7fcff);
   const irisMat = new THREE.MeshBasicMaterial({ color: team === 'cyan' ? 0x123c46 : 0x4a1c24 });
   const glossWhite = new THREE.MeshBasicMaterial({ color: 0xffffff });
   // Puffy glossy "ink-blob" hair liquid: original, but reads wet like Splatoon hair.
-  const hairMat = glossMaterial(team === 'cyan' ? 0x0fb5bd : 0xd94a15);
-  const hairTipMat = glossMaterial(team === 'cyan' ? 0x8cfff5 : 0xffbd70);
+  const hairMat = glossMaterial(colors.main);
 
-  // Slender tapered torso with a narrow waist and longer silhouette.
+  // Modular anime mannequin: a clean cylindrical torso is the common clothing mount.
   const torso = new THREE.Group();
-  torso.position.y = 1.05;
+  torso.position.y = 1.08;
   visual.add(torso);
 
-  const hoodie = outlinedMesh(new THREE.CapsuleGeometry(0.36, 0.54, 5, 10), jacketMat);
-  hoodie.scale.set(0.98, 1.04, 0.78);
+  const torsoHeight = outfit?.style === 'coat' ? 0.92 : outfit?.style === 'hoodie' ? 0.72 : 0.68;
+  const torsoRadius = outfit?.style === 'hoodie' ? 0.36 : outfit?.style === 'coat' ? 0.32 : 0.3;
+  const hoodie = outlinedMesh(new THREE.CylinderGeometry(torsoRadius * 0.82, torsoRadius, torsoHeight, 14), jacketMat);
+  hoodie.position.y = outfit?.style === 'coat' ? -0.08 : 0;
   torso.add(hoodie);
-  const zipper = roundedBox(0.035, 0.58, 0.03, accentMat);
-  zipper.position.set(0, 0, 0.31);
+  const collar = outlinedMesh(new THREE.CylinderGeometry(0.19, 0.22, 0.12, 12), accentMat);
+  collar.position.y = torsoHeight * 0.48;
+  torso.add(collar);
+  const zipper = roundedBox(outfit?.style === 'jersey' ? 0.22 : 0.035, torsoHeight * 0.74, 0.025, accentMat);
+  zipper.position.set(0, -0.03, torsoRadius + 0.015);
   torso.add(zipper);
-  const pocket = roundedBox(0.34, 0.12, 0.05, accentMat);
-  pocket.position.set(0, -0.24, 0.3);
-  torso.add(pocket);
-  const hood = outlinedMesh(new THREE.TorusGeometry(0.3, 0.09, 7, 14, Math.PI * 1.55), jacketMat);
-  hood.rotation.z = Math.PI * 0.225;
-  hood.position.set(0, 0.32, -0.1);
-  torso.add(hood);
-
-  const shorts = outlinedMesh(new THREE.SphereGeometry(0.34, 10, 7), shortsMat);
-  shorts.scale.set(1.02, 0.38, 0.78);
-  shorts.position.y = -0.5;
-  torso.add(shorts);
-  for (const x of [-0.19, 0.19]) {
-    const cuff = outlinedMesh(new THREE.TorusGeometry(0.115, 0.028, 6, 10), accentMat);
-    cuff.rotation.x = Math.PI / 2;
-    cuff.position.set(x, -0.61, 0.02);
-    torso.add(cuff);
+  if (outfit?.style === 'hoodie') {
+    const pocket = roundedBox(0.32, 0.11, 0.045, accentMat);
+    pocket.position.set(0, -0.2, torsoRadius + 0.02);
+    torso.add(pocket);
   }
+  if (outfit?.style === 'coat') {
+    for (const side of [-1, 1]) {
+      const tail = roundedBox(0.25, 0.46, 0.08, jacketMat);
+      tail.position.set(side * 0.14, -0.54, -0.02);
+      tail.rotation.z = side * 0.05;
+      torso.add(tail);
+    }
+  }
+
+  const bottomHeight = outfit?.bottoms === 'pants' ? 0.42 : outfit?.bottoms === 'skirt' ? 0.3 : 0.24;
+  const shorts = outlinedMesh(new THREE.CylinderGeometry(outfit?.bottoms === 'skirt' ? 0.34 : 0.28, outfit?.bottoms === 'skirt' ? 0.42 : 0.31, bottomHeight, 12), shortsMat);
+  shorts.position.y = -0.48;
+  torso.add(shorts);
 
   // Slightly smaller head keeps the expressive style while improving the head-to-body ratio.
   const head = new THREE.Group();
@@ -371,45 +374,70 @@ export function createFighter(
   tongue.position.set(0, -0.155, 0.485);
   head.add(tongue);
 
-  // Puffy blob hair: cap + five dangling glossy locks with bright tips.
+  // Team-ink anime hair: every hairstyle uses the fighter's current team color.
   const hair = new THREE.Group();
   head.add(hair);
-  const hairCap = outlinedMesh(new THREE.SphereGeometry(0.56, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.52), hairMat);
-  hairCap.scale.set(0.98, 0.8, 0.98);
-  hairCap.position.y = 0.14;
+  const hairstyle = outfit?.hairstyle ?? 'short';
+  const hairCap = outlinedMesh(new THREE.SphereGeometry(0.56, 14, 10, 0, Math.PI * 2, 0, Math.PI * (hairstyle === 'bob' || hairstyle === 'long' ? 0.68 : 0.56)), hairMat);
+  hairCap.scale.set(0.99, hairstyle === 'spiky' ? 0.68 : 0.78, 0.99);
+  hairCap.position.y = 0.13;
   hair.add(hairCap);
-  const lockLayout: Array<[number, number, number, number, number]> = [
-    [0, -0.02, -0.42, 0, -0.12],
-    [-0.34, -0.06, -0.3, 0.42, -0.2],
-    [0.34, -0.06, -0.3, -0.42, -0.2],
-    [-0.46, -0.08, 0.08, 0.9, -0.05],
-    [0.46, -0.08, 0.08, -0.9, -0.05]
-  ];
-  for (const [x, y, z, rz, rx] of lockLayout) {
-    const lock = outlinedMesh(new THREE.CapsuleGeometry(0.13, 0.3, 3, 8), hairMat);
-    lock.position.set(x, y, z);
-    lock.rotation.z = rz;
-    lock.rotation.x = rx;
-    hair.add(lock);
-    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.1, 8, 6), hairTipMat);
-    tip.position.set(x + Math.sin(-rz) * 0.22, y - 0.24, z + Math.sin(rx) * 0.2);
-    tip.scale.set(1, 1.25, 1);
-    hair.add(tip);
-  }
-  // Front bangs.
-  for (const x of [-0.22, 0, 0.22]) {
-    const bang = outlinedMesh(new THREE.CapsuleGeometry(0.09, 0.2, 3, 7), hairMat);
-    bang.position.set(x, 0.32, 0.39);
-    bang.rotation.x = 0.45;
-    bang.rotation.z = -x * 1.1;
+  for (const x of [-0.28, -0.09, 0.1, 0.29]) {
+    const bang = outlinedMesh(new THREE.ConeGeometry(hairstyle === 'spiky' ? 0.14 : 0.11, hairstyle === 'spiky' ? 0.46 : 0.34, 7), hairMat);
+    bang.position.set(x, hairstyle === 'spiky' ? 0.34 + Math.abs(x) * 0.1 : 0.17 - Math.abs(x) * 0.12, hairstyle === 'spiky' ? 0.25 : 0.43);
+    bang.rotation.x = hairstyle === 'spiky' ? -0.55 : 0.34;
+    bang.rotation.z = -x * (hairstyle === 'spiky' ? 1.1 : 0.65);
     hair.add(bang);
+  }
+  const addHairTail = (x: number, y: number, z: number, length: number, rotationZ: number) => {
+    const tail = outlinedMesh(new THREE.CapsuleGeometry(0.1, length, 3, 8), hairMat);
+    tail.position.set(x, y, z);
+    tail.rotation.z = rotationZ;
+    hair.add(tail);
+  };
+  if (hairstyle === 'ponytail') addHairTail(-0.36, -0.05, -0.32, 0.55, 0.46);
+  else if (hairstyle === 'twin-tail') {
+    addHairTail(-0.42, -0.08, -0.22, 0.56, 0.62);
+    addHairTail(0.42, -0.08, -0.22, 0.56, -0.62);
+  } else if (hairstyle === 'long') {
+    for (const x of [-0.3, -0.1, 0.1, 0.3]) addHairTail(x, -0.22, -0.35, 0.72, x * -0.35);
+  } else if (hairstyle === 'bun') {
+    const bun = outlinedMesh(new THREE.SphereGeometry(0.25, 11, 8), hairMat);
+    bun.position.set(0, 0.6, -0.12);
+    hair.add(bun);
+  } else if (hairstyle === 'braid') {
+    for (let i = 0; i < 4; i++) {
+      const bead = outlinedMesh(new THREE.SphereGeometry(0.11 - i * 0.012, 8, 6), hairMat);
+      bead.position.set(0.34, -0.06 - i * 0.18, -0.28);
+      hair.add(bead);
+    }
+  }
+
+  const accessory = outfit?.accessory ?? 'none';
+  if (accessory === 'headphones') {
+    const band = outlinedMesh(new THREE.TorusGeometry(0.48, 0.045, 7, 16, Math.PI), accentMat);
+    band.rotation.z = Math.PI;
+    band.position.y = 0.13;
+    hair.add(band);
+    for (const side of [-1, 1]) {
+      const ear = outlinedMesh(new THREE.CylinderGeometry(0.13, 0.13, 0.09, 10), accentMat);
+      ear.rotation.z = Math.PI / 2;
+      ear.position.set(side * 0.5, 0.03, 0);
+      hair.add(ear);
+    }
+  } else if (accessory === 'visor') {
+    const visor = outlinedMesh(new THREE.BoxGeometry(0.7, 0.16, 0.08), accentMat);
+    visor.position.set(0, 0.1, 0.5);
+    visor.rotation.x = -0.08;
+    head.add(visor);
   }
 
   // Long, slim limbs make lateral movement and airborne poses read more precisely.
-  const leftArm = makeLimb(0.58, 0.078, jacketMat);
+  const armMat = outfit?.style === 'jersey' ? skinMat : jacketMat;
+  const leftArm = makeLimb(0.58, 0.078, armMat);
   leftArm.position.set(-0.35, 1.38, 0.02);
   visual.add(leftArm);
-  const rightArm = makeLimb(0.58, 0.078, jacketMat);
+  const rightArm = makeLimb(0.58, 0.078, armMat);
   rightArm.position.set(0.35, 1.38, 0.02);
   visual.add(rightArm);
   for (const arm of [leftArm, rightArm]) {
@@ -429,7 +457,8 @@ export function createFighter(
     const sock = roundedBox(0.17, 0.2, 0.18, whiteMat);
     sock.position.y = -0.55;
     leg.add(sock);
-    const shoe = outlinedMesh(new THREE.CapsuleGeometry(0.145, 0.24, 4, 8), whiteMat);
+    const shoeRadius = outfit?.footwear === 'boots' ? 0.17 : outfit?.footwear === 'high-tops' ? 0.16 : 0.145;
+    const shoe = outlinedMesh(new THREE.CapsuleGeometry(shoeRadius, outfit?.footwear === 'boots' ? 0.34 : 0.24, 4, 8), whiteMat);
     shoe.rotation.x = Math.PI / 2;
     shoe.position.set(side * 0.01, -0.66, 0.16);
     leg.add(shoe);
@@ -558,7 +587,7 @@ export function resetFighterPose(fighter: Fighter) {
   fighter.swimLevel = 0;
   rig.visual.position.set(0, 0, 0);
   rig.visual.rotation.set(0, 0, 0);
-  rig.visual.scale.set(0.86, 1.03, 0.86);
+  rig.visual.scale.set(BASE_VISUAL_SCALE_XZ, BASE_VISUAL_SCALE_Y, BASE_VISUAL_SCALE_XZ);
   rig.torso.rotation.set(0, 0, 0);
   rig.torso.scale.set(1, 1, 1);
   rig.head.rotation.set(0, 0, 0);

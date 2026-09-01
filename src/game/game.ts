@@ -310,14 +310,16 @@ export class NeonGame {
     const cyanSpawns = this.arena.spawns.cyan;
     const orangeSpawns = this.arena.spawns.orange;
     const teamSize = this.arena.teamSize;
-    this.player = createFighter(0, 'cyan', true, weapon, cyanSpawns[0], outfit.primary, outfit.accent);
+    this.player = createFighter(0, 'cyan', true, weapon, cyanSpawns[0], outfit);
     this.fighters.push(this.player); this.scene.add(this.player.group);
     for (let i = 1; i < teamSize; i++) {
-      const f = createFighter(i, 'cyan', false, WEAPONS[i % WEAPONS.length], cyanSpawns[i]);
+      const aiOutfit = OUTFITS[i % OUTFITS.length];
+      const f = createFighter(i, 'cyan', false, WEAPONS[i % WEAPONS.length], cyanSpawns[i], aiOutfit);
       this.fighters.push(f); this.scene.add(f.group);
     }
     for (let i = 0; i < teamSize; i++) {
-      const f = createFighter(teamSize + i, 'orange', false, WEAPONS[(i + 1) % WEAPONS.length], orangeSpawns[i]);
+      const aiOutfit = OUTFITS[(teamSize + i) % OUTFITS.length];
+      const f = createFighter(teamSize + i, 'orange', false, WEAPONS[(i + 1) % WEAPONS.length], orangeSpawns[i], aiOutfit);
       this.fighters.push(f); this.scene.add(f.group);
     }
   }

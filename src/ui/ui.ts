@@ -1,4 +1,4 @@
-import { ARENAS, ArenaId, DEFAULT_SAVE, Difficulty, OUTFITS, SaveData, WEAPONS, WeaponId } from '../game/config';
+import { ARENAS, ArenaId, DEFAULT_SAVE, Difficulty, OutfitSpec, OUTFITS, SaveData, WEAPONS, WeaponId } from '../game/config';
 import { GameStats } from '../game/game';
 
 export type Screen = 'loading' | 'home' | 'loadout' | 'settings' | 'game' | 'result';
@@ -74,8 +74,8 @@ export class GameUI {
               <div class="sticker sticker-squad">${modeLabel}<br/>AI SQUAD</div>
               <div class="loadout-strip glass">
                 <span class="weapon-glyph">${weapon.icon}</span>
-                <div><small>当前武器</small><strong>${weapon.name}</strong><em>${weapon.subtitle}</em></div>
-                <button data-action="loadout">更换</button>
+                <div><small>当前搭配</small><strong>${outfit.name} · ${weapon.name}</strong><em>${outfit.desc} / ${weapon.subtitle}</em></div>
+                <button data-action="loadout">穿搭</button>
               </div>
             </div>
           </section>
@@ -118,10 +118,10 @@ export class GameUI {
                 </button>`).join('')}</div>
             </div>
             <div class="catalog-section">
-              <div class="section-heading"><div><small>MIX YOUR FIT</small><h3>街头套装</h3></div><span>${OUTFITS.length} ITEMS</span></div>
+              <div class="section-heading"><div><small>BUILD YOUR ANIME LOOK</small><h3>服装与发型</h3></div><span>${OUTFITS.length} LOOKS</span></div>
               <div class="outfit-grid">${OUTFITS.map(o => `
                 <button class="outfit-card ${o.id === this.save.outfit ? 'selected' : ''}" data-outfit="${o.id}">
-                  <span class="fabric" style="--p:${o.primary};--a:${o.accent}"></span><strong>${o.name}</strong><small>${o.desc}</small><span class="check">✓</span>
+                  <span class="fabric" style="--p:${o.primary};--a:${o.accent}" data-style="${o.style}" data-hair="${o.hairstyle}"></span><strong>${o.name}</strong><small>${o.desc}</small><em>${this.outfitMeta(o)}</em><span class="check">✓</span>
                 </button>`).join('')}</div>
             </div>
           </main>
@@ -405,6 +405,13 @@ export class GameUI {
 
   private splatIcon(): string {
     return `<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M9 35 C0 21 17 9 28 17 C37 1 55 13 51 28 C68 38 49 60 34 51 C22 64 4 51 9 35 Z" fill="#b8ff3d" stroke="#07131f" stroke-width="4"/><path d="M22 24 L42 44 M42 24 L22 44" stroke="#07131f" stroke-width="7" stroke-linecap="round"/></svg>`;
+  }
+
+  private outfitMeta(outfit: OutfitSpec) {
+    const style = { hoodie: '卫衣', jacket: '夹克', jersey: '球衣', coat: '风衣' }[outfit.style];
+    const bottoms = { shorts: '短裤', skirt: '裙装', pants: '长裤' }[outfit.bottoms];
+    const hair = { short: '短发', bob: '波波头', ponytail: '马尾', 'twin-tail': '双马尾', long: '长发', bun: '丸子头', spiky: '刺发', braid: '编发' }[outfit.hairstyle];
+    return `${style} · ${bottoms} · ${hair}`;
   }
 
   private bindCommon() {

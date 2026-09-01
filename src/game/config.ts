@@ -51,11 +51,28 @@ export const TEAM_COLORS = {
   orange: { main: 0xff6828, light: 0xffbd70, dark: 0xb82d09, css: '#ff6b2c' }
 };
 
-export const OUTFITS = [
-  { id: 'night-runner', name: '夜行速递', desc: '反光运动夹克', primary: '#101e31', accent: '#16e0d0' },
-  { id: 'acid-pop', name: '酸性波普', desc: '荧光机能套装', primary: '#b8ff3d', accent: '#17212b' },
-  { id: 'sunset-club', name: '落日俱乐部', desc: '橙紫街头外套', primary: '#ff6b2c', accent: '#8c7dff' },
-  { id: 'mono-tag', name: '黑白标签', desc: '极简贴纸风', primary: '#edf5f7', accent: '#17212b' }
+export interface OutfitSpec {
+  id: string;
+  name: string;
+  desc: string;
+  primary: string;
+  accent: string;
+  style: 'hoodie' | 'jacket' | 'jersey' | 'coat';
+  bottoms: 'shorts' | 'skirt' | 'pants';
+  accessory: 'none' | 'headphones' | 'visor';
+  hairstyle: 'short' | 'bob' | 'ponytail' | 'twin-tail' | 'long' | 'bun' | 'spiky' | 'braid';
+  footwear: 'sneakers' | 'boots' | 'high-tops';
+}
+
+export const OUTFITS: OutfitSpec[] = [
+  { id: 'night-runner', name: '夜行速递', desc: '反光运动夹克', primary: '#101e31', accent: '#16e0d0', style: 'jacket', bottoms: 'pants', accessory: 'headphones', hairstyle: 'short', footwear: 'sneakers' },
+  { id: 'acid-pop', name: '酸性波普', desc: '荧光宽松卫衣', primary: '#b8ff3d', accent: '#17212b', style: 'hoodie', bottoms: 'shorts', accessory: 'none', hairstyle: 'spiky', footwear: 'high-tops' },
+  { id: 'sunset-club', name: '落日俱乐部', desc: '橙紫街头球衣', primary: '#ff6b2c', accent: '#8c7dff', style: 'jersey', bottoms: 'shorts', accessory: 'visor', hairstyle: 'ponytail', footwear: 'sneakers' },
+  { id: 'mono-tag', name: '黑白标签', desc: '极简长款风衣', primary: '#edf5f7', accent: '#17212b', style: 'coat', bottoms: 'pants', accessory: 'none', hairstyle: 'bob', footwear: 'boots' },
+  { id: 'aqua-campus', name: '水色学园', desc: '清爽水手夹克', primary: '#d9fbff', accent: '#148fa8', style: 'jacket', bottoms: 'skirt', accessory: 'none', hairstyle: 'twin-tail', footwear: 'high-tops' },
+  { id: 'berry-beat', name: '莓果节拍', desc: '舞台短款球衣', primary: '#d92f86', accent: '#ffd4ef', style: 'jersey', bottoms: 'skirt', accessory: 'headphones', hairstyle: 'long', footwear: 'boots' },
+  { id: 'urban-moss', name: '苔城机能', desc: '军绿机能外套', primary: '#3c5948', accent: '#c8ef7a', style: 'coat', bottoms: 'pants', accessory: 'visor', hairstyle: 'braid', footwear: 'boots' },
+  { id: 'cloud-candy', name: '云朵糖霜', desc: '粉蓝蓬松卫衣', primary: '#a9c8ff', accent: '#ff9fd5', style: 'hoodie', bottoms: 'shorts', accessory: 'none', hairstyle: 'bun', footwear: 'high-tops' }
 ];
 
 export interface SaveData {

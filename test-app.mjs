@@ -28,6 +28,7 @@ try {
   const weapons = await page.locator('.weapon-card').count();
   if (weapons < 8) throw new Error(`Expected at least 8 weapons, found ${weapons}`);
   const outfits = await page.locator('.outfit-card').count();
+  if (outfits < 8) throw new Error(`Expected at least 8 outfits and hairstyles, found ${outfits}`);
   await page.locator('[data-weapon="burst"]').click();
   await page.locator('[data-outfit="acid-pop"]').click();
   const savedLoadout = await page.evaluate(() => {
