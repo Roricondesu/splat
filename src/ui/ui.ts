@@ -42,6 +42,7 @@ export class GameUI {
     const weapon = WEAPONS.find(w => w.id === this.save.weapon)!;
     const outfit = OUTFITS.find(o => o.id === this.save.outfit)!;
     const arena = ARENAS.find(item => item.id === this.save.arena) ?? ARENAS[0];
+    const modeLabel = `${arena.teamSize}v${arena.teamSize}`;
     this.root.innerHTML = `
       <div class="screen home-screen">
         <div class="ambient ambient-a"></div><div class="ambient ambient-b"></div>
@@ -64,13 +65,13 @@ export class GameUI {
               <button class="secondary-btn" data-action="spectate"><span>上帝视角观战</span><small>AI VS AI</small></button>
               <button class="secondary-btn" data-action="loadout"><span>装备工坊</span><small>LOADOUT</small></button>
             </div>
-            <div class="control-tip desktop-only"><kbd>WASD</kbd> 移动　<kbd>空格</kbd> 跳跃　<kbd>鼠标</kbd> 瞄准　<kbd>左键</kbd> 喷涂　<kbd>Shift</kbd> 疾行</div>
+            <div class="control-tip desktop-only"><kbd>WASD</kbd> 移动　<kbd>空格</kbd> 跳跃　<kbd>鼠标</kbd> 瞄准　<kbd>左键</kbd> 喷涂　<kbd>Shift</kbd> 潜入己方墨水</div>
           </section>
           <section class="hero-stage">
             <div class="character-card">
               ${this.characterPreview(outfit.primary, outfit.accent)}
               <div class="sticker sticker-new">NEW<br/>DROP!</div>
-              <div class="sticker sticker-squad">4v4<br/>AI SQUAD</div>
+              <div class="sticker sticker-squad">${modeLabel}<br/>AI SQUAD</div>
               <div class="loadout-strip glass">
                 <span class="weapon-glyph">${weapon.icon}</span>
                 <div><small>当前武器</small><strong>${weapon.name}</strong><em>${weapon.subtitle}</em></div>
@@ -189,16 +190,15 @@ export class GameUI {
           <div class="ammo-wrap" aria-label="颜料余量"><div class="ammo-label">${this.svgIcon('#b8ff3d', 25)}${this.svgDigits('100', { fill: '#b8ff3d', className: 'hud-digits ammo-digits', dataAttr: 'data-ammo-text' })}</div><i><b data-ammo></b></i></div>
         </div>
         <div class="health-ring" aria-label="生命值"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="42"></circle><circle data-health-ring cx="50" cy="50" r="42"></circle></svg>${this.healthIcon()}${this.svgDigits('100', { fill: '#ffffff', className: 'hud-digits health-digits', dataAttr: 'data-health' })}</div>
-        <div class="score-chip" aria-label="${spectating ? '观战模式' : '占地贡献'}">${spectating ? this.spectatorIcon() : this.turfIcon()}${spectating ? this.botDuelIcon() : this.svgDigits('0000', { fill: '#b8ff3d', className: 'hud-digits score-digits', dataAttr: 'data-score' })}</div>
-        ${spectating ? `<div class="spectator-badge" aria-label="上帝视角 AI 自动对决">${this.spectatorIcon()}${this.botDuelIcon()}</div>` : ''}
+        ${spectating ? '' : `<div class="score-chip" aria-label="占地贡献">${this.turfIcon()}${this.svgDigits('0000', { fill: '#b8ff3d', className: 'hud-digits score-digits', dataAttr: 'data-score' })}</div>`}
         <button class="pause-btn" data-pause aria-label="暂停">${this.pauseIcon()}</button>
         <div class="respawn-overlay" data-respawn aria-label="重新入场">${this.respawnIcon()}${this.svgDigits('3.0', { fill: '#ff6b2c', className: 'hud-digits respawn-digits', dataAttr: 'data-respawn-time' })}</div>
-        <div class="mobile-controls">
+        ${spectating ? '' : `<div class="mobile-controls">
           <div class="joystick" data-stick aria-label="移动摇杆"><i data-stick-knob></i></div>
           <button class="jump-btn" data-jump aria-label="跳跃">${this.jumpIcon()}</button>
-          <button class="dash-btn" data-dash aria-label="疾行">${this.dashIcon()}</button>
+          <button class="dash-btn" data-submerge aria-label="潜入己方墨水">${this.submergeIcon()}</button>
           <button class="fire-btn" data-fire aria-label="喷涂">${this.fireIcon()}</button>
-        </div>
+        </div>`}
       </div>`;
     this.root.querySelector<HTMLElement>('[data-pause]')!.onclick = () => this.showPause();
     return this.root.querySelector<HTMLCanvasElement>('#game-canvas')!;
@@ -378,8 +378,8 @@ export class GameUI {
     return `<svg class="control-icon jump-icon" viewBox="0 0 64 64" aria-hidden="true"><path d="M12 49 Q31 56 52 47" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" opacity=".55"/><path d="M32 48 V14 M18 29 L32 14 L46 29" fill="none" stroke="#fff" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="39" r="3" fill="#b8ff3d"/><circle cx="52" cy="36" r="4" fill="#16e0d0"/></svg>`;
   }
 
-  private dashIcon(): string {
-    return `<svg class="control-icon dash-icon" viewBox="0 0 64 64" aria-hidden="true"><path d="M7 21 H28 M4 32 H23 M9 43 H30" stroke="#062126" stroke-width="6" stroke-linecap="round"/><path d="M29 15 L55 32 L29 49 Z" fill="#062126" stroke="#e6fffc" stroke-width="3" stroke-linejoin="round"/></svg>`;
+  private submergeIcon(): string {
+    return `<svg class="control-icon dash-icon" viewBox="0 0 64 64" aria-hidden="true"><path d="M6 39 C14 33 22 44 31 37 C39 31 47 42 58 34 V54 H6 Z" fill="#08d3c8" stroke="#062126" stroke-width="4" stroke-linejoin="round"/><path d="M32 8 C39 18 45 24 45 32 A13 13 0 1 1 19 32 C19 24 25 18 32 8 Z" fill="#e6fffc" stroke="#062126" stroke-width="4"/><path d="M32 18 V38 M24 31 L32 40 L40 31" fill="none" stroke="#062126" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
   }
 
   private fireIcon(): string {

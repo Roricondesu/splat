@@ -1,6 +1,6 @@
 import './style.css';
 import { NeonGame } from './game/game';
-import { SaveData } from './game/config';
+import { SaveData, WEAPONS } from './game/config';
 import { GameUI } from './ui/ui';
 
 const app = document.querySelector<HTMLElement>('#app')!;
@@ -33,7 +33,12 @@ function beginGame(spectating = false) {
     Object.assign(window, {
       __neonDebug: {
         state: () => game?.getDebugState(),
-        respawnPlayer: () => game?.debugRespawnPlayer()
+        respawnPlayer: () => game?.debugRespawnPlayer(),
+        setPlayerAmmo: (ammo: number) => game?.debugSetPlayerAmmo(ammo),
+        paintUnderPlayer: (team: 'cyan' | 'orange') => game?.debugPaintUnderPlayer(team),
+        finishMatch: () => game?.debugFinishMatch(),
+        firePlayer: () => game?.debugFirePlayer(),
+        weaponSpecs: () => WEAPONS.map(weapon => ({ ...weapon }))
       }
     });
   }

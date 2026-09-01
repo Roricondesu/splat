@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Team, WeaponId } from './config';
 
 export const GRID_SIZE = 128;
-export const WORLD_SIZE = 44;
+export const DEFAULT_WORLD_SIZE = 44;
 const CANVAS_SIZE = 1024;
 
 export type PaintSplatStyle = WeaponId | 'spawn' | 'elimination';
@@ -29,7 +29,7 @@ export class PaintField {
   private textureDirty = false;
   private lastTextureUploadAt = -Infinity;
 
-  constructor(scene: THREE.Scene) {
+  constructor(scene: THREE.Scene, readonly worldSize = DEFAULT_WORLD_SIZE) {
     this.canvas = document.createElement('canvas');
     this.canvas.width = CANVAS_SIZE;
     this.canvas.height = CANVAS_SIZE;
@@ -44,7 +44,7 @@ export class PaintField {
     this.texture.anisotropy = 2;
 
     this.floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE),
+      new THREE.PlaneGeometry(this.worldSize, this.worldSize),
       new THREE.MeshToonMaterial({ color: 0xcbd4dc })
     );
     this.floor.rotation.x = -Math.PI / 2;
@@ -52,7 +52,7 @@ export class PaintField {
     scene.add(this.floor);
 
     this.inkFloor = new THREE.Mesh(
-      new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE),
+      new THREE.PlaneGeometry(this.worldSize, this.worldSize),
       new THREE.MeshPhysicalMaterial({
         map: this.texture,
         transparent: true,
@@ -86,13 +86,13 @@ export class PaintField {
 
   worldToGrid(x: number, z: number) {
     return {
-      x: Math.floor((x / WORLD_SIZE + 0.5) * GRID_SIZE),
-      y: Math.floor((z / WORLD_SIZE + 0.5) * GRID_SIZE)
+      x: Math.floor((x / this.worldSize + 0.5) * GRID_SIZE),
+      y: Math.floor((z / this.worldSize + 0.5) * GRID_SIZE)
     };
   }
 
   gridToWorld(x: number, y: number, out = new THREE.Vector3()) {
-    return out.set((x / GRID_SIZE - 0.5) * WORLD_SIZE, 0, (y / GRID_SIZE - 0.5) * WORLD_SIZE);
+    return out.set((x / GRID_SIZE - 0.5) * this.worldSize, 0, (y / GRID_SIZE - 0.5) * this.worldSize);
   }
 
   paint(
@@ -146,8 +146,13 @@ export class PaintField {
     const cos = Math.cos(angle);
     const sin = Math.sin(angle);
     const g = this.worldToGrid(x, z);
-    const pixelRadius = Math.max(1.5, radius / WORLD_SIZE * GRID_SIZE * Math.max(0.55, strength));
-    const extent = style === 'roller' ? 1.5 : style === 'bucket' ? 1.3 : style === 'elimination' ? 1.2 : 1.08;
+    const pixelRadius = Math.max(1.5, radius / this.worldSize * GRID_SIZE * Math.max(0.55, strength));
+    const extent = style === 'charger' ? 2.3
+      : style === 'roller' ? 1.5
+      : style === 'bucket' || style === 'umbrella' ? 1.3
+      : style === 'brush' ? 1.25
+      : style === 'elimination' ? 1.2
+      : 1.08;
     const bound = Math.ceil(pixelRadius * extent);
     const value = team === 'cyan' ? 1 : 2;
     let changedCells = 0;
@@ -179,15 +184,21 @@ export class PaintField {
   }
 
   private insideSplat(style: PaintSplatStyle, along: number, side: number, noise: number, stretch: number) {
-    if (style === 'roller') {
-      const halfLength = 1.18 + stretch * 0.5;
+    if (style === 'roller' || style === 'brush') {
+      const halfLength = style === 'brush' ? 0.85 : 1.18 + stretch * 0.5;
+      const halfWidth = style === 'brush' ? 0.78 : 0.5 + noise * 0.08;
       const core = Math.max(Math.abs(along) - halfLength, 0);
-      return core * core + side * side < (0.5 + noise * 0.08) ** 2;
+      return core * core + side * side < halfWidth * halfWidth;
     }
-    if (style === 'bucket') {
-      const shifted = along - 0.18;
-      const width = 0.9 - THREE.MathUtils.clamp(shifted, -0.8, 0.9) * 0.2;
-      return (shifted / 1.12) ** 2 + (side / width) ** 2 < 0.82 + noise * 0.2;
+    if (style === 'bucket' || style === 'umbrella') {
+      const shifted = along - (style === 'umbrella' ? 0.1 : 0.18);
+      const length = style === 'umbrella' ? 0.95 : 1.12;
+      const width = style === 'umbrella' ? 1.05 : 0.9 - THREE.MathUtils.clamp(shifted, -0.8, 0.9) * 0.2;
+      return (shifted / length) ** 2 + (side / width) ** 2 < (style === 'umbrella' ? 0.95 : 0.82 + noise * 0.2);
+    }
+    if (style === 'charger') {
+      const shifted = along - 0.1;
+      return (shifted / (1.9 + stretch * 0.8)) ** 2 + (side / 0.26) ** 2 < 0.9 + noise * 0.12;
     }
     if (style === 'burst' || style === 'elimination') {
       const distance = Math.hypot(along, side);
@@ -211,9 +222,9 @@ export class PaintField {
     stretch: number,
     serial: number
   ) {
-    const scale = CANVAS_SIZE / WORLD_SIZE;
-    const cx = (x / WORLD_SIZE + 0.5) * CANVAS_SIZE;
-    const cy = (z / WORLD_SIZE + 0.5) * CANVAS_SIZE;
+    const scale = CANVAS_SIZE / this.worldSize;
+    const cx = (x / this.worldSize + 0.5) * CANVAS_SIZE;
+    const cy = (z / this.worldSize + 0.5) * CANVAS_SIZE;
     const r = radius * scale;
     const color = PALETTES[team].base;
 
@@ -224,15 +235,18 @@ export class PaintField {
     this.ctx.globalAlpha = 1;
     this.ctx.beginPath();
 
-    if (style === 'roller') {
-      const length = r * (2.35 + stretch * 0.7);
-      const width = r * 0.95;
+    if (style === 'roller' || style === 'brush') {
+      const length = style === 'brush' ? r * 1.7 : r * (2.35 + stretch * 0.7);
+      const width = style === 'brush' ? r * 1.55 : r * 0.95;
       this.ctx.roundRect(-length / 2, -width / 2, length, width, width / 2);
-    } else if (style === 'bucket') {
-      this.ctx.moveTo(-r * 0.88, 0);
-      this.ctx.quadraticCurveTo(-r * 0.28, -r * 1.0, r * 1.08, -r * 0.62);
-      this.ctx.quadraticCurveTo(r * 0.72, 0, r * 1.08, r * 0.62);
-      this.ctx.quadraticCurveTo(-r * 0.28, r * 1.0, -r * 0.88, 0);
+    } else if (style === 'bucket' || style === 'umbrella') {
+      const fan = style === 'umbrella' ? 1.16 : 1;
+      this.ctx.moveTo(-r * 0.88 * fan, 0);
+      this.ctx.quadraticCurveTo(-r * 0.28, -r * 1.0 * fan, r * 1.08, -r * 0.62 * fan);
+      this.ctx.quadraticCurveTo(r * 0.72, 0, r * 1.08, r * 0.62 * fan);
+      this.ctx.quadraticCurveTo(-r * 0.28, r * 1.0 * fan, -r * 0.88 * fan, 0);
+    } else if (style === 'charger') {
+      this.ctx.roundRect(-r * 2.1, -r * 0.22, r * 4.2 * (1 + stretch * 0.5), r * 0.44, r * 0.2);
     } else {
       const lobes = style === 'elimination' ? 11 : style === 'burst' ? 8 : style === 'spawn' ? 12 : 10;
       const points = lobes * 2;
@@ -276,8 +290,8 @@ export class PaintField {
   }
 
   teamAt(x: number, z: number): Team | null {
-    const gx = Math.floor((x / WORLD_SIZE + 0.5) * GRID_SIZE);
-    const gy = Math.floor((z / WORLD_SIZE + 0.5) * GRID_SIZE);
+    const gx = Math.floor((x / this.worldSize + 0.5) * GRID_SIZE);
+    const gy = Math.floor((z / this.worldSize + 0.5) * GRID_SIZE);
     if (gx < 0 || gy < 0 || gx >= GRID_SIZE || gy >= GRID_SIZE) return null;
     const value = this.data[gy * GRID_SIZE + gx];
     return value === 1 ? 'cyan' : value === 2 ? 'orange' : null;
@@ -291,12 +305,12 @@ export class PaintField {
 
     for (let i = 0; i < maxTries; i++) {
       const local = i < maxTries - 6;
-      const distance = local ? 3.5 + Math.random() * 10.5 : Math.random() * WORLD_SIZE * 0.55;
+      const distance = local ? 3.5 + Math.random() * 10.5 : Math.random() * this.worldSize * 0.55;
       const angle = Math.random() * Math.PI * 2;
-      const worldX = THREE.MathUtils.clamp(origin.x + Math.cos(angle) * distance, -WORLD_SIZE / 2 + 1.2, WORLD_SIZE / 2 - 1.2);
-      const worldZ = THREE.MathUtils.clamp(origin.z + Math.sin(angle) * distance, -WORLD_SIZE / 2 + 1.2, WORLD_SIZE / 2 - 1.2);
-      const gx = Math.floor((worldX / WORLD_SIZE + 0.5) * GRID_SIZE);
-      const gy = Math.floor((worldZ / WORLD_SIZE + 0.5) * GRID_SIZE);
+      const worldX = THREE.MathUtils.clamp(origin.x + Math.cos(angle) * distance, -this.worldSize / 2 + 1.2, this.worldSize / 2 - 1.2);
+      const worldZ = THREE.MathUtils.clamp(origin.z + Math.sin(angle) * distance, -this.worldSize / 2 + 1.2, this.worldSize / 2 - 1.2);
+      const gx = Math.floor((worldX / this.worldSize + 0.5) * GRID_SIZE);
+      const gy = Math.floor((worldZ / this.worldSize + 0.5) * GRID_SIZE);
       const value = this.data[gy * GRID_SIZE + gx];
       let frontier = 0;
       for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {

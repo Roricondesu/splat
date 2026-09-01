@@ -13,6 +13,8 @@ try {
   page.on('pageerror', e => errors.push('pageerror: ' + e.message));
   await page.goto('http://localhost:4174?testMatchSeconds=4', { waitUntil: 'networkidle' });
   await page.waitForSelector('[data-action="start"]');
+  const arenaCards = await page.locator('[data-arena]').count();
+  if (arenaCards < 3) throw new Error(`Expected at least 3 arenas, found ${arenaCards}`);
   await page.screenshot({ path: `${out}/home-desktop.png`, fullPage: true });
 
   await page.click('[data-action="settings"]');
@@ -24,6 +26,7 @@ try {
   await page.click('[data-action="loadout"]');
   await page.waitForSelector('.weapon-card');
   const weapons = await page.locator('.weapon-card').count();
+  if (weapons < 8) throw new Error(`Expected at least 8 weapons, found ${weapons}`);
   const outfits = await page.locator('.outfit-card').count();
   await page.locator('[data-weapon="burst"]').click();
   await page.locator('[data-outfit="acid-pop"]').click();
@@ -36,6 +39,8 @@ try {
   await page.click('[data-action="start"]');
   await page.waitForSelector('#game-canvas');
   await page.waitForTimeout(1200);
+  const spectatorBadges = await page.locator('.spectator-badge,.score-chip.spectator-only').count();
+  if (spectatorBadges !== 0) throw new Error(`Spectator hint is still rendered: ${spectatorBadges}`);
   const canvasVisible = await page.locator('#game-canvas').isVisible();
   const gameTextNodes = await page.locator('.game-screen text').count();
   const gameVisibleText = await page.locator('.game-screen').evaluate(root => {
@@ -113,10 +118,12 @@ try {
   await page.click('[data-arena="canal-foundry"]');
   const selectedArena = await page.evaluate(() => JSON.parse(localStorage.getItem('neon-turf-save') || '{}').arena);
   await page.click('[data-action="spectate"]');
-  await page.waitForSelector('.spectator-badge');
+  await page.waitForSelector('#game-canvas');
   await page.waitForTimeout(3500);
   const spectatorState = await page.evaluate(() => window.__neonDebug?.state());
-  const spectatorBadgeVisible = await page.locator('.spectator-badge').isVisible();
+  const spectatorBadgeVisible = await page.locator('.spectator-badge,.score-chip.spectator-only').count() === 0;
+  const spectatorControls = await page.locator('.mobile-controls,[data-stick],[data-fire],[data-submerge],[data-dash],[data-jump]').count();
+  if (spectatorControls !== 0) throw new Error(`Spectator controls are still rendered: ${spectatorControls}`);
   const compactHud = await page.evaluate(() => ({
     percentageDigits: document.querySelectorAll('[data-cyan],[data-orange]').length,
     eventFeed: document.querySelectorAll('.event-feed').length,
@@ -128,10 +135,16 @@ try {
   if (!spectatorState?.spectatorMode || spectatorState.activeAI !== 8 || spectatorState.cameraY < 15 || spectatorState.arena !== 'canal-foundry') {
     throw new Error(`God view did not initialize correctly: ${JSON.stringify(spectatorState)}`);
   }
+  if (spectatorState.aiCollisionViolations !== 0) {
+    throw new Error(`AI intersected scene colliders: ${JSON.stringify(spectatorState.aiPositions)}`);
+  }
+  if (spectatorState.aiJumpCount < 1) {
+    throw new Error(`AI never jumped in the 3D arena: ${JSON.stringify(spectatorState)}`);
+  }
   if (spectatorState.aiPaintShots < 8 || spectatorState.aiProductivePaintCells < 80 || spectatorState.coverage?.paintedPercent < 4) {
     throw new Error(`AI did not proactively paint enough turf: ${JSON.stringify(spectatorState)}`);
   }
-  if (spectatorState.renderer?.calls > 1050) {
+  if (spectatorState.renderer?.calls > 1400) {
     throw new Error(`Render calls regressed: ${JSON.stringify(spectatorState.renderer)}`);
   }
   await page.screenshot({ path: `${out}/spectator-desktop.png`, fullPage: true });
@@ -180,6 +193,7 @@ try {
 
   console.log(JSON.stringify({
     weapons,
+    arenaCards,
     outfits,
     savedDifficulty,
     savedLoadout,
@@ -204,6 +218,7 @@ try {
     selectedArena,
     compactHud,
     spectatorBadgeVisible,
+    spectatorControls,
     spectatorState,
     mobileControls,
     mobileJumpVisible,

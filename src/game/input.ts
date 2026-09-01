@@ -5,11 +5,11 @@ export interface InputState {
   lookY: number;
   firing: boolean;
   jump: boolean;
-  dash: boolean;
+  submerge: boolean;
 }
 
 export class InputController {
-  state: InputState = { moveX: 0, moveY: 0, lookX: 0, lookY: 0, firing: false, jump: false, dash: false };
+  state: InputState = { moveX: 0, moveY: 0, lookX: 0, lookY: 0, firing: false, jump: false, submerge: false };
   private keys = new Set<string>();
   private swipeLookId: number | null = null;
   private swipePointerType: string | null = null;
@@ -17,9 +17,10 @@ export class InputController {
   private lastSwipeY = 0;
   private surface: HTMLElement;
   private jumpQueued = false;
+  private fireQueued = false;
   private mobileMoveX = 0;
   private mobileMoveY = 0;
-  private mobileDash = false;
+  private mobileSubmerge = false;
   private disposers: Array<() => void> = [];
 
   private listen<T extends EventTarget>(target: T, type: string, handler: EventListenerOrEventListenerObject, options?: AddEventListenerOptions | boolean) {
@@ -49,7 +50,10 @@ export class InputController {
         this.swipePointerType = e.pointerType;
         this.lastSwipeX = e.clientX;
         this.lastSwipeY = e.clientY;
-        if (e.pointerType === 'mouse' && e.button === 0) this.state.firing = true;
+        if (e.pointerType === 'mouse' && e.button === 0) {
+          this.state.firing = true;
+          this.fireQueued = true;
+        }
         if (this.surface.hasPointerCapture?.(e.pointerId) === false) {
           try { this.surface.setPointerCapture?.(e.pointerId); } catch { /* synthetic events may not own a native pointer */ }
         }
@@ -79,6 +83,8 @@ export class InputController {
     });
     this.listen(window, 'blur', () => {
       this.state.firing = false;
+      this.state.submerge = false;
+      this.mobileSubmerge = false;
       this.keys.clear();
       this.swipeLookId = null;
       this.swipePointerType = null;
@@ -91,15 +97,17 @@ export class InputController {
     this.disposers = [];
     this.keys.clear();
     this.state.firing = false;
+    this.fireQueued = false;
     this.mobileMoveX = 0;
     this.mobileMoveY = 0;
-    this.mobileDash = false;
+    this.mobileSubmerge = false;
+    this.state.submerge = false;
   }
 
   update() {
     this.state.moveX = Math.max(-1, Math.min(1, ((this.keys.has('KeyD') ? 1 : 0) - (this.keys.has('KeyA') ? 1 : 0)) + this.mobileMoveX));
     this.state.moveY = Math.max(-1, Math.min(1, ((this.keys.has('KeyW') ? 1 : 0) - (this.keys.has('KeyS') ? 1 : 0)) + this.mobileMoveY));
-    this.state.dash = this.mobileDash || this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+    this.state.submerge = this.mobileSubmerge || this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
     if (this.keys.has('ArrowLeft')) this.state.lookX -= 3;
     if (this.keys.has('ArrowRight')) this.state.lookX += 3;
     if (this.keys.has('ArrowUp')) this.state.lookY -= 2;
@@ -110,6 +118,12 @@ export class InputController {
     const queued = this.jumpQueued;
     this.jumpQueued = false;
     this.state.jump = false;
+    return queued;
+  }
+
+  consumeFirePress() {
+    const queued = this.fireQueued;
+    this.fireQueued = false;
     return queued;
   }
 
@@ -157,15 +171,21 @@ export class InputController {
     }
     const fire = root.querySelector<HTMLElement>('[data-fire]');
     if (fire) {
-      this.listen(fire, 'pointerdown', (event: Event) => { const e = event as PointerEvent; e.preventDefault(); this.state.firing = true; try { fire.setPointerCapture(e.pointerId); } catch { /* synthetic event */ } });
+      this.listen(fire, 'pointerdown', (event: Event) => {
+        const e = event as PointerEvent;
+        e.preventDefault();
+        this.state.firing = true;
+        this.fireQueued = true;
+        try { fire.setPointerCapture(e.pointerId); } catch { /* synthetic event */ }
+      });
       this.listen(fire, 'pointerup', () => { this.state.firing = false; });
       this.listen(fire, 'pointercancel', () => { this.state.firing = false; });
     }
-    const dash = root.querySelector<HTMLElement>('[data-dash]');
-    if (dash) {
-      this.listen(dash, 'pointerdown', (event: Event) => { const e = event as PointerEvent; e.preventDefault(); e.stopPropagation(); this.mobileDash = true; });
-      this.listen(dash, 'pointerup', () => { this.mobileDash = false; });
-      this.listen(dash, 'pointercancel', () => { this.mobileDash = false; });
+    const submerge = root.querySelector<HTMLElement>('[data-submerge]');
+    if (submerge) {
+      this.listen(submerge, 'pointerdown', (event: Event) => { const e = event as PointerEvent; e.preventDefault(); e.stopPropagation(); this.mobileSubmerge = true; });
+      this.listen(submerge, 'pointerup', () => { this.mobileSubmerge = false; });
+      this.listen(submerge, 'pointercancel', () => { this.mobileSubmerge = false; });
     }
     const jump = root.querySelector<HTMLElement>('[data-jump]');
     if (jump) this.listen(jump, 'pointerdown', (event: Event) => {

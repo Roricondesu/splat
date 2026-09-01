@@ -33,6 +33,14 @@ export interface Fighter {
   aiPaintShots: number;
   aiFightShots: number;
   aiProductivePaintCells: number;
+  aiStuckTime: number;
+  aiLastPosX: number;
+  aiLastPosZ: number;
+  aiSteerBias: number;
+  aiSteerUntil: number;
+  aiJumpCooldown: number;
+  aiJumpCount: number;
+  aimPitch: number;
   lastRollerPaintX: number;
   lastRollerPaintZ: number;
 }
@@ -55,6 +63,8 @@ interface FighterRig {
   ring: THREE.Mesh;
 }
 
+const BASE_VISUAL_SCALE_XZ = 0.78;
+const BASE_VISUAL_SCALE_Y = 1.05;
 const outlineMaterial = new THREE.MeshBasicMaterial({ color: 0x18303d, side: THREE.BackSide });
 const localVelocityScratch = new THREE.Vector3();
 const upAxis = new THREE.Vector3(0, 1, 0);
@@ -138,6 +148,70 @@ function makeWeapon(spec: WeaponSpec, accent: THREE.Material, dark: THREE.Materi
     const strap = roundedBox(0.5, 0.07, 0.07, dark);
     strap.position.set(0, -0.02, 0.12);
     root.add(strap);
+  } else if (spec.id === 'charger') {
+    const body = outlinedMesh(new THREE.CapsuleGeometry(0.14, 1.15, 4, 9), accent);
+    body.rotation.x = Math.PI / 2;
+    body.position.z = 0.42;
+    root.add(body);
+    const barrel = outlinedMesh(new THREE.CylinderGeometry(0.055, 0.07, 1.05, 8), dark);
+    barrel.rotation.x = Math.PI / 2;
+    barrel.position.z = 1.42;
+    root.add(barrel);
+    const scope = outlinedMesh(new THREE.BoxGeometry(0.16, 0.16, 0.4), paintMat);
+    scope.position.set(0, 0.2, 0.5);
+    root.add(scope);
+    const grip = roundedBox(0.12, 0.26, 0.12, dark);
+    grip.position.set(0, -0.22, 0.24);
+    grip.rotation.x = 0.28;
+    root.add(grip);
+  } else if (spec.id === 'scatter') {
+    for (const side of [-1, 1]) {
+      const barrel = outlinedMesh(new THREE.CylinderGeometry(0.1, 0.13, 0.62, 8), accent);
+      barrel.rotation.x = Math.PI / 2;
+      barrel.position.set(side * 0.24, side * -0.05, 0.62);
+      root.add(barrel);
+      const muzzle = outlinedMesh(new THREE.TorusGeometry(0.11, 0.035, 6, 10), paintMat);
+      muzzle.position.set(side * 0.24, side * -0.05, 0.93);
+      root.add(muzzle);
+      const trigger = roundedBox(0.1, 0.2, 0.1, dark);
+      trigger.position.set(side * 0.24, -0.24, 0.28);
+      root.add(trigger);
+    }
+    const spine = roundedBox(0.26, 0.14, 0.4, dark);
+    spine.position.z = 0.16;
+    root.add(spine);
+  } else if (spec.id === 'brush') {
+    const handle = outlinedMesh(new THREE.CylinderGeometry(0.055, 0.07, 0.95, 8), dark);
+    handle.rotation.x = Math.PI / 1.9;
+    handle.position.set(0, 0.04, 0.26);
+    root.add(handle);
+    const head = outlinedMesh(new THREE.BoxGeometry(0.92, 0.12, 0.3), paintMat);
+    head.position.set(0, -0.3, 0.78);
+    head.rotation.z = 0.12;
+    root.add(head);
+    const collar = outlinedMesh(new THREE.TorusGeometry(0.13, 0.045, 6, 10), accent);
+    collar.rotation.x = Math.PI / 2;
+    collar.position.set(0, 0.34, 0.46);
+    root.add(collar);
+  } else if (spec.id === 'umbrella') {
+    const shaft = outlinedMesh(new THREE.CylinderGeometry(0.06, 0.075, 1.0, 8), dark);
+    shaft.rotation.x = Math.PI / 2;
+    shaft.position.z = 0.34;
+    root.add(shaft);
+    const canopy = new THREE.Mesh(
+      new THREE.SphereGeometry(0.56, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.42),
+      new THREE.MeshToonMaterial({ color: teamColor, side: THREE.DoubleSide })
+    );
+    canopy.rotation.x = -Math.PI / 2;
+    canopy.position.z = 0.58;
+    root.add(canopy);
+    const canopyRim = outlinedMesh(new THREE.TorusGeometry(0.5, 0.06, 6, 16), paintMat);
+    canopyRim.position.z = 0.92;
+    root.add(canopyRim);
+    const nozzle = outlinedMesh(new THREE.CylinderGeometry(0.12, 0.17, 0.24, 9), accent);
+    nozzle.rotation.x = Math.PI / 2;
+    nozzle.position.z = 0.92;
+    root.add(nozzle);
   } else if (spec.id === 'burst') {
     const body = outlinedMesh(new THREE.SphereGeometry(0.3, 12, 8), accent);
     body.scale.set(1, 0.84, 1.24);
@@ -186,7 +260,7 @@ export function createFighter(
   const group = new THREE.Group();
   const visual = new THREE.Group();
   group.add(visual);
-  visual.scale.set(0.86, 1.03, 0.86);
+  visual.scale.set(BASE_VISUAL_SCALE_XZ, BASE_VISUAL_SCALE_Y, BASE_VISUAL_SCALE_XZ);
 
   const colors = TEAM_COLORS[team];
   const primary = outfitPrimary ? new THREE.Color(outfitPrimary).getHex() : team === 'cyan' ? 0x27475c : 0x5e3a4c;
@@ -203,39 +277,40 @@ export function createFighter(
   const hairMat = glossMaterial(team === 'cyan' ? 0x0fb5bd : 0xd94a15);
   const hairTipMat = glossMaterial(team === 'cyan' ? 0x8cfff5 : 0xffbd70);
 
-  // Torso: short, compact, hoodie-wearing.
+  // Slender tapered torso with a narrow waist and longer silhouette.
   const torso = new THREE.Group();
-  torso.position.y = 1.0;
+  torso.position.y = 1.05;
   visual.add(torso);
 
-  const hoodie = outlinedMesh(new THREE.CapsuleGeometry(0.43, 0.4, 5, 10), jacketMat);
-  hoodie.scale.set(1.06, 1, 0.84);
+  const hoodie = outlinedMesh(new THREE.CapsuleGeometry(0.36, 0.54, 5, 10), jacketMat);
+  hoodie.scale.set(0.98, 1.04, 0.78);
   torso.add(hoodie);
-  const zipper = roundedBox(0.05, 0.5, 0.035, accentMat);
-  zipper.position.set(0, 0, 0.39);
+  const zipper = roundedBox(0.035, 0.58, 0.03, accentMat);
+  zipper.position.set(0, 0, 0.31);
   torso.add(zipper);
-  const pocket = roundedBox(0.44, 0.16, 0.06, accentMat);
-  pocket.position.set(0, -0.2, 0.37);
+  const pocket = roundedBox(0.34, 0.12, 0.05, accentMat);
+  pocket.position.set(0, -0.24, 0.3);
   torso.add(pocket);
   const hood = outlinedMesh(new THREE.TorusGeometry(0.3, 0.09, 7, 14, Math.PI * 1.55), jacketMat);
   hood.rotation.z = Math.PI * 0.225;
   hood.position.set(0, 0.32, -0.1);
   torso.add(hood);
 
-  const shorts = outlinedMesh(new THREE.SphereGeometry(0.42, 10, 7), shortsMat);
-  shorts.scale.set(1.05, 0.44, 0.85);
-  shorts.position.y = -0.44;
+  const shorts = outlinedMesh(new THREE.SphereGeometry(0.34, 10, 7), shortsMat);
+  shorts.scale.set(1.02, 0.38, 0.78);
+  shorts.position.y = -0.5;
   torso.add(shorts);
-  for (const x of [-0.24, 0.24]) {
-    const cuff = outlinedMesh(new THREE.TorusGeometry(0.15, 0.038, 6, 10), accentMat);
+  for (const x of [-0.19, 0.19]) {
+    const cuff = outlinedMesh(new THREE.TorusGeometry(0.115, 0.028, 6, 10), accentMat);
     cuff.rotation.x = Math.PI / 2;
-    cuff.position.set(x, -0.57, 0.02);
+    cuff.position.set(x, -0.61, 0.02);
     torso.add(cuff);
   }
 
-  // Head: big, round, expressive.
+  // Slightly smaller head keeps the expressive style while improving the head-to-body ratio.
   const head = new THREE.Group();
-  head.position.y = 1.74;
+  head.position.y = 1.82;
+  head.scale.setScalar(0.92);
   visual.add(head);
 
   const face = outlinedMesh(new THREE.SphereGeometry(0.55, 16, 12), skinMat, 1.045);
@@ -325,59 +400,59 @@ export function createFighter(
     hair.add(bang);
   }
 
-  // Arms: right arm holds the weapon forward, left arm supports it.
-  const leftArm = makeLimb(0.5, 0.1, jacketMat);
-  leftArm.position.set(-0.44, 1.28, 0.02);
+  // Long, slim limbs make lateral movement and airborne poses read more precisely.
+  const leftArm = makeLimb(0.58, 0.078, jacketMat);
+  leftArm.position.set(-0.35, 1.38, 0.02);
   visual.add(leftArm);
-  const rightArm = makeLimb(0.5, 0.1, jacketMat);
-  rightArm.position.set(0.44, 1.28, 0.02);
+  const rightArm = makeLimb(0.58, 0.078, jacketMat);
+  rightArm.position.set(0.35, 1.38, 0.02);
   visual.add(rightArm);
   for (const arm of [leftArm, rightArm]) {
-    const hand = outlinedMesh(new THREE.SphereGeometry(0.14, 9, 7), skinMat);
-    hand.position.y = -0.5;
+    const hand = outlinedMesh(new THREE.SphereGeometry(0.105, 9, 7), skinMat);
+    hand.position.y = -0.58;
     arm.add(hand);
   }
 
-  // Legs and chunky sneakers.
-  const leftLeg = makeLimb(0.5, 0.105, skinMat);
-  leftLeg.position.set(-0.18, 0.61, 0);
+  // Longer legs, slimmer ankles and compact sneakers.
+  const leftLeg = makeLimb(0.64, 0.082, skinMat);
+  leftLeg.position.set(-0.145, 0.59, 0);
   visual.add(leftLeg);
-  const rightLeg = makeLimb(0.5, 0.105, skinMat);
-  rightLeg.position.set(0.18, 0.61, 0);
+  const rightLeg = makeLimb(0.64, 0.082, skinMat);
+  rightLeg.position.set(0.145, 0.59, 0);
   visual.add(rightLeg);
   for (const [leg, side] of [[leftLeg, -1], [rightLeg, 1]] as const) {
-    const sock = roundedBox(0.24, 0.18, 0.24, whiteMat);
-    sock.position.y = -0.42;
+    const sock = roundedBox(0.17, 0.2, 0.18, whiteMat);
+    sock.position.y = -0.55;
     leg.add(sock);
-    const shoe = outlinedMesh(new THREE.CapsuleGeometry(0.19, 0.26, 4, 8), whiteMat);
+    const shoe = outlinedMesh(new THREE.CapsuleGeometry(0.145, 0.24, 4, 8), whiteMat);
     shoe.rotation.x = Math.PI / 2;
-    shoe.position.set(side * 0.01, -0.53, 0.18);
+    shoe.position.set(side * 0.01, -0.66, 0.16);
     leg.add(shoe);
-    const sole = roundedBox(0.3, 0.12, 0.42, accentMat);
-    sole.position.set(side * 0.01, -0.6, 0.16);
+    const sole = roundedBox(0.23, 0.09, 0.35, accentMat);
+    sole.position.set(side * 0.01, -0.72, 0.15);
     leg.add(sole);
-    const toe = roundedBox(0.27, 0.14, 0.18, accentMat);
-    toe.position.set(side * 0.01, -0.55, 0.34);
+    const toe = roundedBox(0.21, 0.11, 0.16, accentMat);
+    toe.position.set(side * 0.01, -0.67, 0.3);
     leg.add(toe);
-    const lace = roundedBox(0.16, 0.05, 0.22, darkMat);
-    lace.position.set(side * 0.01, -0.44, 0.2);
+    const lace = roundedBox(0.13, 0.035, 0.18, darkMat);
+    lace.position.set(side * 0.01, -0.58, 0.17);
     leg.add(lace);
   }
 
   // Backpack ink tank with a visible liquid level.
   const backpack = new THREE.Group();
-  backpack.position.set(0, 1.14, -0.42);
+  backpack.position.set(0, 1.18, -0.34);
   visual.add(backpack);
-  const packBody = outlinedMesh(new THREE.CapsuleGeometry(0.3, 0.38, 4, 9), darkMat);
+  const packBody = outlinedMesh(new THREE.CapsuleGeometry(0.23, 0.42, 4, 9), darkMat);
   packBody.rotation.x = 0.1;
   backpack.add(packBody);
   const tankShell = new THREE.Mesh(
-    new THREE.CapsuleGeometry(0.19, 0.32, 4, 10),
+    new THREE.CapsuleGeometry(0.145, 0.34, 4, 10),
     new THREE.MeshPhysicalMaterial({ color: 0xffffff, transparent: true, opacity: 0.32, roughness: 0.05, clearcoat: 1, clearcoatRoughness: 0.05 })
   );
   tankShell.position.z = -0.14;
   backpack.add(tankShell);
-  const tankInk = new THREE.Mesh(new THREE.CapsuleGeometry(0.155, 0.27, 4, 10), glossMaterial(colors.main));
+  const tankInk = new THREE.Mesh(new THREE.CapsuleGeometry(0.118, 0.29, 4, 10), glossMaterial(colors.main));
   tankInk.position.z = -0.14;
   backpack.add(tankInk);
   const cap = outlinedMesh(new THREE.CylinderGeometry(0.09, 0.11, 0.13, 8), accentMat);
@@ -444,6 +519,14 @@ export function createFighter(
     aiPaintShots: 0,
     aiFightShots: 0,
     aiProductivePaintCells: 0,
+    aiStuckTime: 0,
+    aiLastPosX: spawn.x,
+    aiLastPosZ: spawn.z,
+    aiSteerBias: 0,
+    aiSteerUntil: 0,
+    aiJumpCooldown: 0,
+    aiJumpCount: 0,
+    aimPitch: 0,
     lastRollerPaintX: spawn.x,
     lastRollerPaintZ: spawn.z
   };
@@ -461,7 +544,7 @@ export function resetFighterPose(fighter: Fighter) {
   rig.torso.rotation.set(0, 0, 0);
   rig.torso.scale.set(1, 1, 1);
   rig.head.rotation.set(0, 0, 0);
-  rig.head.position.y = 1.74;
+  rig.head.position.y = 1.82;
   rig.hair.rotation.set(0, 0, 0);
   rig.leftLeg.rotation.set(0, 0, -0.025);
   rig.rightLeg.rotation.set(0, 0, 0.025);
@@ -487,7 +570,7 @@ export function animateFighter(fighter: Fighter, time: number, speed: number, dt
   fighter.landingPulse = Math.max(0, fighter.landingPulse - dt * 5.5);
   const landingSquash = Math.sin(fighter.landingPulse * Math.PI) * 0.13;
 
-  // Ink-swim: body dips into own ink while dashing through it.
+  // Ink-swim: the fighter deliberately dives into allied ink, becoming low and hydrodynamic.
   fighter.swimLevel = THREE.MathUtils.lerp(fighter.swimLevel, fighter.swim ? 1 : 0, 1 - Math.pow(0.0005, dt));
   const swim = fighter.swimLevel;
   const swimKick = Math.sin(phase * 1.6) * swim;
@@ -530,11 +613,16 @@ export function animateFighter(fighter: Fighter, time: number, speed: number, dt
 
   fighter.recoil = Math.max(0, fighter.recoil - dt * 8.5);
   const kick = Math.sin(fighter.recoil * Math.PI) * 0.16;
+  fighter.aimPitch = THREE.MathUtils.lerp(fighter.aimPitch, 0, 1 - Math.pow(0.02, dt));
+  const aim = fighter.aimPitch;
   rig.head.position.y = 1.74 - bob * 0.22 - landingSquash * 0.2 - swim * 0.3;
   rig.hair.rotation.y = Math.sin(time * 2.6 + fighter.id) * 0.05 * (1 - swim);
   rig.weapon.position.z = 0.48 - kick;
-  rig.weapon.rotation.x = -0.12 - kick * 0.6;
-  rig.rightArm.rotation.x -= kick * 0.5;
+  rig.weapon.position.y = 1.04 - aim * 0.14;
+  rig.weapon.rotation.x = -0.12 - kick * 0.6 - aim * 1.15;
+  rig.rightArm.rotation.x -= kick * 0.5 + aim * 0.9;
+  rig.leftArm.rotation.x += aim * 0.28;
+  rig.head.rotation.x -= aim * 0.32;
   rig.backpack.rotation.x = Math.sin(phase) * 0.035 * moveAmount + swim * 0.2;
 
   // Backpack ink level tracks ammo.
@@ -580,10 +668,10 @@ export function animateFighter(fighter: Fighter, time: number, speed: number, dt
   } else if (fighter.spawnPulse > 0) {
     fighter.spawnPulse = Math.max(0, fighter.spawnPulse - dt * 2.4);
     const pop = 1 + Math.sin((1 - fighter.spawnPulse) * Math.PI) * 0.12;
-    rig.visual.scale.set(pop * 0.86, pop * 1.03, pop * 0.86);
+    rig.visual.scale.set(pop * BASE_VISUAL_SCALE_XZ, pop * BASE_VISUAL_SCALE_Y, pop * BASE_VISUAL_SCALE_XZ);
   } else {
-    const squashX = 0.86 * (1 + landingSquash * 0.5 + swim * 0.16);
-    const squashY = 1.03 * (1 - landingSquash * 0.65 - swim * 0.42);
+    const squashX = BASE_VISUAL_SCALE_XZ * (1 + landingSquash * 0.5 + swim * 0.16);
+    const squashY = BASE_VISUAL_SCALE_Y * (1 - landingSquash * 0.65 - swim * 0.42);
     rig.visual.scale.set(squashX, squashY, squashX);
   }
 }

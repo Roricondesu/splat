@@ -19,6 +19,8 @@ export interface ArenaBuild {
   paintables: THREE.Mesh[];
   walkables: THREE.Object3D[];
   spawns: Record<Team, THREE.Vector3[]>;
+  worldSize: number;
+  teamSize: number;
 }
 
 interface BuildContext {
@@ -71,7 +73,8 @@ function placeRamp(
   yaw: number,
   color: number
 ) {
-  const ramp = meshBox(width, 0.28, length, color, true);
+  const slopeLength = Math.hypot(length, rise);
+  const ramp = meshBox(width, 0.28, slopeLength, color, true);
   ramp.position.copy(center);
   ramp.position.y += rise * 0.5;
   ramp.rotation.order = 'YXZ';
@@ -85,7 +88,7 @@ function placeRamp(
   rails.rotation.y = yaw;
   rails.rotation.x = -Math.atan2(rise, length);
   for (const x of [-width * 0.5 + 0.12, width * 0.5 - 0.12]) {
-    const rail = meshBox(0.12, 0.62, length, INK);
+    const rail = meshBox(0.12, 0.62, slopeLength, INK);
     rail.position.x = x;
     rails.add(rail);
   }
@@ -116,7 +119,8 @@ function building(
     band.position.set(0, height * (side > 0 ? 0.72 : 0.4), depth * 0.5 + 0.055);
     root.add(band);
   }
-  addObject(ctx, root, { solid: true });
+  addObject(ctx, root);
+  ctx.obstacles.push(body);
   ctx.walkables.push(roof);
   return root;
 }
@@ -132,7 +136,8 @@ function crateStack(ctx: BuildContext, x: number, z: number, color: number, leve
       root.add(box);
     }
   }
-  addObject(ctx, root, { solid: true });
+  addObject(ctx, root);
+  for (const child of root.children) ctx.obstacles.push(child);
 }
 
 function arch(ctx: BuildContext, x: number, z: number, yaw: number, color: number) {
@@ -147,7 +152,8 @@ function arch(ctx: BuildContext, x: number, z: number, yaw: number, color: numbe
   const beam = meshBox(5.15, 0.7, 1.15, WHITE, true);
   beam.position.y = 4.05;
   root.add(beam);
-  addObject(ctx, root, { solid: true });
+  addObject(ctx, root);
+  for (const child of root.children) ctx.obstacles.push(child);
 }
 
 function pipe(ctx: BuildContext, from: THREE.Vector3, to: THREE.Vector3, radius: number, color: number) {
@@ -160,11 +166,12 @@ function pipe(ctx: BuildContext, from: THREE.Vector3, to: THREE.Vector3, radius:
   return mesh;
 }
 
-function addPerimeter(ctx: BuildContext) {
-  placeBox(ctx, [46, 1.6, 0.6], [0, 0.8, -22.6], WHITE, { solid: true, gloss: true });
-  placeBox(ctx, [46, 1.6, 0.6], [0, 0.8, 22.6], WHITE, { solid: true, gloss: true });
-  placeBox(ctx, [0.6, 1.6, 46], [-22.6, 0.8, 0], WHITE, { solid: true, gloss: true });
-  placeBox(ctx, [0.6, 1.6, 46], [22.6, 0.8, 0], WHITE, { solid: true, gloss: true });
+function addPerimeter(ctx: BuildContext, size = 46) {
+  const edge = size * 0.5 + 0.3;
+  placeBox(ctx, [size, 1.6, 0.6], [0, 0.8, -edge], WHITE, { solid: true, gloss: true });
+  placeBox(ctx, [size, 1.6, 0.6], [0, 0.8, edge], WHITE, { solid: true, gloss: true });
+  placeBox(ctx, [0.6, 1.6, size], [-edge, 0.8, 0], WHITE, { solid: true, gloss: true });
+  placeBox(ctx, [0.6, 1.6, size], [edge, 0.8, 0], WHITE, { solid: true, gloss: true });
 }
 
 function buildSkylineMarket(ctx: BuildContext) {
@@ -182,10 +189,10 @@ function buildSkylineMarket(ctx: BuildContext) {
   const sw = building(ctx, -13.6, 10.5, 6, 5.4, 4.6, 0x9bd7bd, CYAN);
 
   // Exterior ramps and roof-to-roof bridges create flanking routes.
-  placeRamp(ctx, new THREE.Vector3(-13.3, 0, -3.1), 2.7, 5.2, 3.55, 0, PINK);
-  placeRamp(ctx, new THREE.Vector3(13.3, 0, 3.1), 2.7, 5.2, 3.55, Math.PI, BLUE);
-  placeRamp(ctx, new THREE.Vector3(8.4, 0, -10.5), 2.4, 5, 4.75, Math.PI / 2, SAND);
-  placeRamp(ctx, new THREE.Vector3(-8.4, 0, 10.5), 2.4, 5, 4.75, -Math.PI / 2, 0x9bd7bd);
+  placeRamp(ctx, new THREE.Vector3(-13.3, 0, -3.1), 3.8, 7.4, 3.55, 0, PINK);
+  placeRamp(ctx, new THREE.Vector3(13.3, 0, 3.1), 3.8, 7.4, 3.55, Math.PI, BLUE);
+  placeRamp(ctx, new THREE.Vector3(8.4, 0, -10.5), 3.6, 8.2, 4.75, Math.PI / 2, SAND);
+  placeRamp(ctx, new THREE.Vector3(-8.4, 0, 10.5), 3.6, 8.2, 4.75, -Math.PI / 2, 0x9bd7bd);
   placeBox(ctx, [6.2, 0.35, 2.3], [-7, 3.6, -5], WHITE, { walkable: true, gloss: true, rotationY: 0.55 });
   placeBox(ctx, [6.2, 0.35, 2.3], [7, 3.6, 5], WHITE, { walkable: true, gloss: true, rotationY: 0.55 });
   placeBox(ctx, [6.5, 0.34, 1.9], [0, 4.35, -7.5], PURPLE, { walkable: true, gloss: true });
@@ -222,9 +229,12 @@ function buildCanalFoundry(ctx: BuildContext) {
   placeBox(ctx, [17, 1.7, 43], [-13.4, 0.85, 0], 0xaebbc1, { solid: true, walkable: true, gloss: true });
   placeBox(ctx, [17, 1.7, 43], [13.4, 0.85, 0], 0xaebbc1, { solid: true, walkable: true, gloss: true });
   for (const z of [-13, 0, 13]) {
-    placeBox(ctx, [10.2, 0.38, 3.4], [0, 2.05, z], z === 0 ? ORANGE : WHITE, { walkable: true, gloss: true });
-    placeRamp(ctx, new THREE.Vector3(-5.8, 0, z), 3.3, 4.6, 1.9, -Math.PI / 2, CYAN);
-    placeRamp(ctx, new THREE.Vector3(5.8, 0, z), 3.3, 4.6, 1.9, Math.PI / 2, ORANGE);
+    placeBox(ctx, [10.2, 0.38, 4.2], [0, 2.05, z], z === 0 ? ORANGE : WHITE, { walkable: true, gloss: true });
+    // Short transition ramps connect the 1.7 m banks to the 2.24 m bridge deck.
+    // Their high ends point toward the canal; the old ramps crossed deep into the
+    // solid banks and could leave fighters grounded inside bank colliders.
+    placeRamp(ctx, new THREE.Vector3(-5.9, 1.57, z), 4.1, 2, 0.54, Math.PI / 2, CYAN);
+    placeRamp(ctx, new THREE.Vector3(5.9, 1.57, z), 4.1, 2, 0.54, -Math.PI / 2, ORANGE);
   }
 
   // Two asymmetric factories: one compact tower, one long processing hall.
@@ -233,9 +243,9 @@ function buildCanalFoundry(ctx: BuildContext) {
   building(ctx, -14.6, 11.8, 5.6, 6.4, 3.2, PINK, PURPLE);
   building(ctx, 14.8, -12.2, 5.8, 6, 5.7, 0x9bd7bd, LIME);
 
-  placeRamp(ctx, new THREE.Vector3(-14.2, 1.65, -3.4), 3, 6, 3.6, 0, BLUE);
-  placeRamp(ctx, new THREE.Vector3(14.2, 1.65, 3), 3, 6, 2.7, Math.PI, SAND);
-  placeRamp(ctx, new THREE.Vector3(14.7, 1.65, -6.8), 2.6, 5.2, 4.2, Math.PI, 0x9bd7bd);
+  placeRamp(ctx, new THREE.Vector3(-14.2, 1.65, -3.4), 4, 8.2, 3.6, 0, BLUE);
+  placeRamp(ctx, new THREE.Vector3(14.2, 1.65, 3), 4, 7.4, 2.7, Math.PI, SAND);
+  placeRamp(ctx, new THREE.Vector3(14.7, 1.65, -6.8), 3.8, 8.8, 4.2, Math.PI, 0x9bd7bd);
 
   // Walkable overhead service lanes.
   placeBox(ctx, [3, 0.34, 16], [-8.2, 4.7, 4], CYAN, { walkable: true, gloss: true });
@@ -259,31 +269,72 @@ function buildCanalFoundry(ctx: BuildContext) {
   arch(ctx, 0, 19, Math.PI, LIME);
 
   return {
-    cyan: [new THREE.Vector3(-16, 1.9, 16), new THREE.Vector3(-12, 1.9, 18), new THREE.Vector3(-18, 1.9, 11), new THREE.Vector3(-10, 1.9, 13)],
-    orange: [new THREE.Vector3(16, 1.9, -16), new THREE.Vector3(12, 1.9, -18), new THREE.Vector3(18, 1.9, -11), new THREE.Vector3(10, 1.9, -13)]
+    cyan: [new THREE.Vector3(-8.5, 1.72, 18), new THREE.Vector3(-11, 1.72, 18), new THREE.Vector3(-8.5, 1.72, 13.5), new THREE.Vector3(-11, 1.72, 13.5)],
+    orange: [new THREE.Vector3(8.5, 1.72, -18), new THREE.Vector3(11, 1.72, -18), new THREE.Vector3(8.5, 1.72, -13.5), new THREE.Vector3(11, 1.72, -13.5)]
+  };
+}
+
+function buildBlankExpanse(ctx: BuildContext) {
+  const worldSize = 72;
+  addPerimeter(ctx, worldSize + 2);
+
+  // Deliberately empty: only a low center marker and perimeter stripes provide
+  // orientation without changing pathing or blocking 20 simultaneous fighters.
+  const centerRing = new THREE.Mesh(
+    new THREE.RingGeometry(3.8, 4.15, 48),
+    new THREE.MeshBasicMaterial({ color: WHITE, transparent: true, opacity: 0.5, side: THREE.DoubleSide, depthWrite: false })
+  );
+  centerRing.rotation.x = -Math.PI / 2;
+  centerRing.position.y = 0.022;
+  centerRing.userData.paintable = false;
+  addObject(ctx, centerRing);
+
+  for (const z of [-22, 0, 22]) {
+    const line = meshBox(worldSize - 6, 0.025, 0.12, z === 0 ? SAND : WHITE);
+    line.position.set(0, 0.012, z);
+    line.userData.paintable = false;
+    addObject(ctx, line);
+  }
+
+  const makeSpawns = (side: -1 | 1) => {
+    const points: THREE.Vector3[] = [];
+    const zRows = [-18, -9, 0, 9, 18];
+    for (let row = 0; row < zRows.length; row++) {
+      points.push(new THREE.Vector3(side * 29, 0, zRows[row] - 2.2));
+      points.push(new THREE.Vector3(side * 25.5, 0, zRows[row] + 2.2));
+    }
+    return points;
+  };
+
+  return {
+    cyan: makeSpawns(-1),
+    orange: makeSpawns(1)
   };
 }
 
 function addWorldLighting(scene: THREE.Scene, root: THREE.Group, id: ArenaId) {
-  scene.background = new THREE.Color(id === 'skyline-market' ? 0x9ed6e8 : 0x89b9cf);
-  scene.fog = new THREE.FogExp2(id === 'skyline-market' ? 0xaeddeb : 0x9dc5d5, 0.01);
+  const isBlank = id === 'blank-expanse';
+  scene.background = new THREE.Color(id === 'skyline-market' ? 0x9ed6e8 : isBlank ? 0xb9e4ef : 0x89b9cf);
+  scene.fog = new THREE.FogExp2(id === 'skyline-market' ? 0xaeddeb : isBlank ? 0xc5e9f0 : 0x9dc5d5, isBlank ? 0.006 : 0.01);
   const hemi = new THREE.HemisphereLight(0xe2f5ff, 0xe6d7bd, 2.1);
   root.add(hemi);
   const sun = new THREE.DirectionalLight(0xffe8bd, 3.15);
   sun.position.set(-18, 35, 15);
   sun.castShadow = true;
   sun.shadow.mapSize.set(1024, 1024);
-  sun.shadow.camera.left = -30;
-  sun.shadow.camera.right = 30;
-  sun.shadow.camera.top = 30;
-  sun.shadow.camera.bottom = -30;
+  const shadowExtent = isBlank ? 42 : 30;
+  sun.shadow.camera.left = -shadowExtent;
+  sun.shadow.camera.right = shadowExtent;
+  sun.shadow.camera.top = shadowExtent;
+  sun.shadow.camera.bottom = -shadowExtent;
   sun.shadow.bias = -0.0004;
   root.add(sun);
   const fill = new THREE.DirectionalLight(0x83aee8, 0.75);
   fill.position.set(18, 20, -20);
   root.add(fill);
 
-  const underlay = meshBox(72, 0.18, 72, id === 'skyline-market' ? CONCRETE : 0x899ba4);
+  const underlaySize = isBlank ? 92 : 72;
+  const underlay = meshBox(underlaySize, 0.18, underlaySize, id === 'skyline-market' ? CONCRETE : isBlank ? 0xd7dfe3 : 0x899ba4);
   underlay.position.y = -0.14;
   underlay.receiveShadow = true;
   scene.add(underlay);
@@ -295,7 +346,12 @@ export function createArena(scene: THREE.Scene, id: ArenaId): ArenaBuild {
   scene.add(root);
   addWorldLighting(scene, root, id);
   const ctx: BuildContext = { root, obstacles: [], walkables: [] };
-  const spawns = id === 'canal-foundry' ? buildCanalFoundry(ctx) : buildSkylineMarket(ctx);
+  const isBlank = id === 'blank-expanse';
+  const spawns = isBlank
+    ? buildBlankExpanse(ctx)
+    : id === 'canal-foundry'
+      ? buildCanalFoundry(ctx)
+      : buildSkylineMarket(ctx);
   root.updateMatrixWorld(true);
   const paintables: THREE.Mesh[] = [];
   root.traverse(object => {
@@ -303,5 +359,14 @@ export function createArena(scene: THREE.Scene, id: ArenaId): ArenaBuild {
       paintables.push(object);
     }
   });
-  return { id, root, obstacles: ctx.obstacles, paintables, walkables: ctx.walkables, spawns };
+  return {
+    id,
+    root,
+    obstacles: ctx.obstacles,
+    paintables,
+    walkables: ctx.walkables,
+    spawns,
+    worldSize: isBlank ? 72 : 44,
+    teamSize: isBlank ? 10 : 4
+  };
 }
