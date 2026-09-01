@@ -39,7 +39,7 @@ async function dragControl(page, selector, pointerId, dx, dy) {
 
 try {
   const fixed = await createGame('fixed');
-  for (const [selector, pointerId] of [['[data-fire]', 61], ['[data-submerge]', 62], ['[data-jump]', 63]]) {
+  for (const [selector, pointerId] of [['[data-fire]', 61], ['[data-submerge]', 62], ['[data-jump]', 63], ['[data-water-bomb]', 64]]) {
     const sample = await dragControl(fixed.page, selector, pointerId, 70, -32);
     const yawDelta = Math.abs((sample.during?.cameraYaw || 0) - (sample.before?.cameraYaw || 0));
     const pitchDelta = Math.abs((sample.during?.cameraPitch || 0) - (sample.before?.cameraPitch || 0));

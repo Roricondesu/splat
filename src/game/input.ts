@@ -5,11 +5,12 @@ export interface InputState {
   lookY: number;
   firing: boolean;
   jump: boolean;
+  waterBomb: boolean;
   submerge: boolean;
 }
 
 export class InputController {
-  state: InputState = { moveX: 0, moveY: 0, lookX: 0, lookY: 0, firing: false, jump: false, submerge: false };
+  state: InputState = { moveX: 0, moveY: 0, lookX: 0, lookY: 0, firing: false, jump: false, waterBomb: false, submerge: false };
   private keys = new Set<string>();
   private swipeLookId: number | null = null;
   private swipePointerType: string | null = null;
@@ -17,6 +18,7 @@ export class InputController {
   private lastSwipeY = 0;
   private surface: HTMLElement;
   private jumpQueued = false;
+  private waterBombQueued = false;
   private fireQueued = false;
   private firePointerId: number | null = null;
   private submergePointerId: number | null = null;
@@ -43,6 +45,10 @@ export class InputController {
       if (e.code === 'Space' && !e.repeat) {
         e.preventDefault();
         this.jumpQueued = true;
+      }
+      if (e.code === 'KeyQ' && !e.repeat) {
+        e.preventDefault();
+        this.waterBombQueued = true;
       }
     });
     this.listen(window, 'keyup', (event: Event) => this.keys.delete((event as KeyboardEvent).code));
@@ -228,6 +234,13 @@ export class InputController {
     return queued;
   }
 
+  consumeWaterBomb() {
+    const queued = this.waterBombQueued;
+    this.waterBombQueued = false;
+    this.state.waterBomb = false;
+    return queued;
+  }
+
   consumeFirePress() {
     const queued = this.fireQueued;
     this.fireQueued = false;
@@ -307,6 +320,20 @@ export class InputController {
       this.listen(submerge, 'pointermove', (event: Event) => this.updateLookFromControl(event as PointerEvent));
       this.listen(submerge, 'pointerup', (event: Event) => this.finishControlPointer(event as PointerEvent, 'submerge'));
       this.listen(submerge, 'pointercancel', (event: Event) => this.finishControlPointer(event as PointerEvent, 'submerge'));
+    }
+    const bomb = root.querySelector<HTMLElement>('[data-water-bomb]');
+    if (bomb) {
+      this.listen(bomb, 'pointerdown', (event: Event) => {
+        const e = event as PointerEvent;
+        e.preventDefault();
+        e.stopPropagation();
+        this.waterBombQueued = true;
+        this.state.waterBomb = true;
+        this.startLookPointer(e.pointerId, e.pointerType, e.clientX, e.clientY);
+      });
+      this.listen(bomb, 'pointermove', (event: Event) => this.updateLookFromControl(event as PointerEvent));
+      this.listen(bomb, 'pointerup', (event: Event) => this.finishControlPointer(event as PointerEvent, 'jump'));
+      this.listen(bomb, 'pointercancel', (event: Event) => this.finishControlPointer(event as PointerEvent, 'jump'));
     }
     const jump = root.querySelector<HTMLElement>('[data-jump]');
     if (jump) {

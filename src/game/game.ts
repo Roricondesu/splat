@@ -17,6 +17,13 @@ interface Projectile {
   intent: 'paint' | 'fight';
 }
 
+interface WaterBomb {
+  mesh: THREE.Mesh;
+  velocity: THREE.Vector3;
+  owner: Fighter;
+  life: number;
+}
+
 interface CombatEffect {
   group: THREE.Group;
   life: number;
@@ -54,6 +61,7 @@ export class NeonGame {
   readonly paint: PaintField;
   private fighters: Fighter[] = [];
   private projectiles: Projectile[] = [];
+  private waterBombs: WaterBomb[] = [];
   private effects: CombatEffect[] = [];
   private arena: ArenaBuild;
   private obstacles: THREE.Object3D[];
@@ -153,6 +161,7 @@ export class NeonGame {
     this.elapsed = 0; this.matchTime = this.getMatchDuration(); this.kills = 0;
     this.playerShotCount = 0; this.playerLastShotPellets = 0;
     this.projectiles.forEach(p => { this.scene.remove(p.mesh); p.tail.forEach(t => this.scene.remove(t)); }); this.projectiles = [];
+    this.waterBombs.forEach(bomb => { this.scene.remove(bomb.mesh); bomb.mesh.geometry.dispose(); (bomb.mesh.material as THREE.Material).dispose(); }); this.waterBombs = [];
     this.effects.forEach(e => this.scene.remove(e.group)); this.effects = [];
     for (const f of this.fighters) { f.swim = false; f.swimLevel = 0; }
     this.surfaceDecals.forEach(decal => { this.scene.remove(decal); decal.geometry.dispose(); });
@@ -212,6 +221,7 @@ export class NeonGame {
       aiAverageAmmo: this.fighters.filter(fighter => !fighter.isPlayer).reduce((sum, fighter, _, ai) => sum + fighter.ammo / Math.max(1, ai.length), 0),
       aiProductivePaintCells: this.fighters.reduce((sum, fighter) => sum + fighter.aiProductivePaintCells, 0),
       projectiles: this.projectiles.length,
+      waterBombs: this.waterBombs.length,
       projectileSnapshot: this.projectiles.map(projectile => ({
         ownerId: projectile.owner.id,
         weapon: projectile.weapon.id,
@@ -251,6 +261,11 @@ export class NeonGame {
 
   debugFinishMatch() {
     if (location.hostname === 'localhost') this.matchTime = 0;
+  }
+
+  debugThrowWaterBomb() {
+    if (location.hostname !== 'localhost') return false;
+    return this.throwWaterBomb(this.player, this.aimDirection());
   }
 
   debugFirePlayer() {
@@ -312,6 +327,7 @@ export class NeonGame {
       this.updateFighterCommon(fighter, dt, time);
     }
     this.updateProjectiles(dt);
+    this.updateWaterBombs(dt);
     this.updateEffects(dt);
     this.paint.flushTexture(time);
     this.updateCamera(dt);
@@ -354,6 +370,7 @@ export class NeonGame {
       this.playTone(440, 0.08, 0.035);
     }
     this.moveFighter(this.player, dt);
+    if (this.input.consumeWaterBomb()) this.throwWaterBomb(this.player, this.aimDirection());
     const firePressed = this.input.consumeFirePress();
     if (!canSubmerge && this.input.state.firing && (this.player.weapon.automatic || firePressed)) {
       this.tryFire(this.player, this.aimDirection());
@@ -653,6 +670,86 @@ export class NeonGame {
       this.playTone(f.team === 'cyan' ? 320 : 240, 0.035, 0.028);
       if (!f.isPlayer) this.lastAISoundAt = this.elapsed;
     }
+  }
+
+  private throwWaterBomb(owner: Fighter, aim: THREE.Vector3) {
+    if (!owner.alive || owner.swim || owner.ammo < 50) return false;
+    owner.ammo -= 50;
+    owner.recoil = 1;
+    const material = new THREE.MeshPhysicalMaterial({
+      color: TEAM_COLORS[owner.team].main,
+      roughness: 0.06,
+      transmission: 0.18,
+      transparent: true,
+      opacity: 0.92,
+      clearcoat: 1,
+      clearcoatRoughness: 0.03
+    });
+    const mesh = new THREE.Mesh(new THREE.SphereGeometry(0.38, 14, 10), material);
+    mesh.scale.set(1, 1.12, 1);
+    mesh.position.copy(owner.group.position).add(new THREE.Vector3(0, 1.25, 0));
+    const forward = aim.clone().normalize();
+    const horizontal = new THREE.Vector3(forward.x, 0, forward.z).normalize();
+    mesh.position.addScaledVector(horizontal, 0.65);
+    this.scene.add(mesh);
+    this.waterBombs.push({
+      mesh,
+      velocity: horizontal.multiplyScalar(16).add(new THREE.Vector3(0, 9.4 + forward.y * 4, 0)),
+      owner,
+      life: 2.8
+    });
+    this.spawnMuzzleFlash(mesh.position, owner.team, aim, 1.4);
+    this.playTone(owner.team === 'cyan' ? 260 : 210, 0.09, 0.055);
+    return true;
+  }
+
+  private updateWaterBombs(dt: number) {
+    for (let i = this.waterBombs.length - 1; i >= 0; i--) {
+      const bomb = this.waterBombs[i];
+      bomb.life -= dt;
+      bomb.velocity.y -= 18 * dt;
+      bomb.mesh.position.addScaledVector(bomb.velocity, dt);
+      bomb.mesh.rotation.x += dt * 6;
+      bomb.mesh.rotation.z += dt * 8;
+      const pos = bomb.mesh.position;
+      const groundY = this.groundHeightAt(pos);
+      const worldHalf = this.arena.worldSize * 0.5;
+      const detonate = bomb.life <= 0 || pos.y <= groundY + 0.2 || Math.abs(pos.x) > worldHalf || Math.abs(pos.z) > worldHalf;
+      if (!detonate) continue;
+      pos.y = Math.max(groundY + 0.06, 0.06);
+      this.explodeWaterBomb(bomb);
+      this.scene.remove(bomb.mesh);
+      bomb.mesh.geometry.dispose();
+      (bomb.mesh.material as THREE.Material).dispose();
+      this.waterBombs.splice(i, 1);
+    }
+  }
+
+  private explodeWaterBomb(bomb: WaterBomb) {
+    const position = bomb.mesh.position;
+    const radius = 5.1;
+    this.paint.paintImpact(position.x, position.z, radius, bomb.owner.team, bomb.velocity.x, bomb.velocity.z, 0.18, 'burst');
+    this.spawnPaintSplash(position, bomb.owner.team, 1.75);
+    this.spawnGroundRing(position, bomb.owner.team, 0.55, 6.3, 0.52);
+    for (const fighter of this.fighters) {
+      if (!fighter.alive || fighter.team === bomb.owner.team) continue;
+      const dx = fighter.group.position.x - position.x;
+      const dz = fighter.group.position.z - position.z;
+      const distance = Math.hypot(dx, dz);
+      if (distance > radius) continue;
+      const falloff = 1 - distance / radius;
+      const damage = Math.round(24 + falloff * 46);
+      fighter.health -= damage;
+      fighter.hitFlash = 0.3;
+      fighter.velocity.add(this.scratchA.set(dx, 0, dz).normalize().multiplyScalar(4 + falloff * 3));
+      const eliminated = fighter.health <= 0;
+      this.spawnHitBurst(fighter.group.position.clone().add(new THREE.Vector3(0, 1, 0)), bomb.owner.team, this.scratchA, eliminated);
+      if (bomb.owner.isPlayer) this.callbacks.onHit(damage, eliminated);
+      if (eliminated) this.eliminate(fighter, bomb.owner);
+    }
+    bomb.owner.score += 18;
+    if (bomb.owner.isPlayer) this.cameraShake = Math.max(this.cameraShake, 0.42);
+    this.playTone(92, 0.18, 0.085);
   }
 
   private updateProjectiles(dt: number) {

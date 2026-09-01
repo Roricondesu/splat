@@ -65,7 +65,7 @@ export class GameUI {
               <button class="secondary-btn" data-action="spectate"><span>上帝视角观战</span><small>AI VS AI</small></button>
               <button class="secondary-btn" data-action="loadout"><span>装备工坊</span><small>LOADOUT</small></button>
             </div>
-            <div class="control-tip desktop-only"><kbd>WASD</kbd> 移动　<kbd>空格</kbd> 跳跃　<kbd>鼠标</kbd> 瞄准　<kbd>左键</kbd> 喷涂　<kbd>Shift</kbd> 潜入己方墨水</div>
+            <div class="control-tip desktop-only"><kbd>WASD</kbd> 移动　<kbd>空格</kbd> 跳跃　<kbd>鼠标</kbd> 瞄准　<kbd>左键</kbd> 喷涂　<kbd>Q</kbd> 水气球　<kbd>Shift</kbd> 潜入己方墨水</div>
           </section>
           <section class="hero-stage">
             <div class="character-card">
@@ -197,6 +197,7 @@ export class GameUI {
         <div class="respawn-overlay" data-respawn aria-label="重新入场">${this.respawnIcon()}${this.svgDigits('3.0', { fill: '#ff6b2c', className: 'hud-digits respawn-digits', dataAttr: 'data-respawn-time' })}</div>
         ${spectating ? '' : `<div class="mobile-controls">
           <div class="joystick" data-stick aria-label="移动摇杆"><i data-stick-knob></i></div>
+          <button class="bomb-btn" data-water-bomb aria-label="投掷水气球">${this.waterBombIcon()}</button>
           <button class="jump-btn" data-jump aria-label="跳跃">${this.jumpIcon()}</button>
           <button class="dash-btn" data-submerge aria-label="潜入己方墨水">${this.submergeIcon()}</button>
           <button class="fire-btn" data-fire aria-label="喷涂">${this.fireIcon()}</button>
@@ -375,6 +376,10 @@ export class GameUI {
 
   private respawnIcon(): string {
     return `<svg class="respawn-icon" viewBox="0 0 92 92" aria-hidden="true"><path d="M75 30 A33 33 0 1 0 77 58" fill="none" stroke="#fff" stroke-width="10" stroke-linecap="round"/><path d="M71 12 L82 33 L59 35 Z" fill="#ff6b2c" stroke="#07131f" stroke-width="4"/><path d="M46 24 C55 36 63 44 63 56 A17 17 0 1 1 29 56 C29 44 37 36 46 24 Z" fill="#16e0d0" stroke="#07131f" stroke-width="4"/></svg>`;
+  }
+
+  private waterBombIcon(): string {
+    return `<svg class="control-icon bomb-icon" viewBox="0 0 64 64" aria-hidden="true"><path d="M21 17 C23 10 31 7 37 10 L43 16" fill="none" stroke="#e6fffc" stroke-width="5" stroke-linecap="round"/><path d="M42 8 L51 6 L49 15" fill="#b8ff3d" stroke="#062126" stroke-width="3" stroke-linejoin="round"/><path d="M32 16 C44 16 53 26 52 39 C51 51 42 57 31 57 C18 57 10 49 11 37 C12 25 20 17 32 16 Z" fill="#16e0d0" stroke="#062126" stroke-width="4"/><path d="M21 31 Q32 21 44 31 Q34 39 21 31 Z" fill="#e6fffc" opacity=".72"/><circle cx="24" cy="42" r="5" fill="#b8ff3d" stroke="#062126" stroke-width="2"/></svg>`;
   }
 
   private jumpIcon(): string {

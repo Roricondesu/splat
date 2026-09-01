@@ -38,6 +38,7 @@ function beginGame(spectating = false) {
         paintUnderPlayer: (team: 'cyan' | 'orange') => game?.debugPaintUnderPlayer(team),
         finishMatch: () => game?.debugFinishMatch(),
         firePlayer: () => game?.debugFirePlayer(),
+        throwWaterBomb: () => game?.debugThrowWaterBomb(),
         weaponSpecs: () => WEAPONS.map(weapon => ({ ...weapon }))
       }
     });
