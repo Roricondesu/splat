@@ -18,9 +18,16 @@ export class InputController {
   private surface: HTMLElement;
   private jumpQueued = false;
   private fireQueued = false;
+  private firePointerId: number | null = null;
+  private submergePointerId: number | null = null;
+  private floatingMovePointerId: number | null = null;
+  private floatingCenterX = 0;
+  private floatingCenterY = 0;
   private mobileMoveX = 0;
   private mobileMoveY = 0;
   private mobileSubmerge = false;
+  private mobileStick?: HTMLElement;
+  private mobileKnob?: HTMLElement;
   private disposers: Array<() => void> = [];
 
   private listen<T extends EventTarget>(target: T, type: string, handler: EventListenerOrEventListenerObject, options?: AddEventListenerOptions | boolean) {
@@ -28,7 +35,7 @@ export class InputController {
     this.disposers.push(() => target.removeEventListener(type, handler, options));
   }
 
-  constructor(private canvas: HTMLCanvasElement) {
+  constructor(private canvas: HTMLCanvasElement, private joystickMode: 'fixed' | 'floating' = 'fixed') {
     this.surface = canvas.closest<HTMLElement>('.game-screen') ?? canvas;
     this.listen(window, 'keydown', (event: Event) => {
       const e = event as KeyboardEvent;
@@ -46,21 +53,25 @@ export class InputController {
       if (e.pointerType === 'touch' || e.pointerType === 'pen' || e.pointerType === 'mouse') {
         if (e.pointerType === 'mouse' && e.button !== 0 && e.button !== 2) return;
         e.preventDefault();
-        this.swipeLookId = e.pointerId;
-        this.swipePointerType = e.pointerType;
-        this.lastSwipeX = e.clientX;
-        this.lastSwipeY = e.clientY;
+        if (this.joystickMode === 'floating' && e.pointerType !== 'mouse' && e.clientX < innerWidth * 0.46) {
+          this.startFloatingStick(e.pointerId, e.clientX, e.clientY);
+          return;
+        }
+        this.startLookPointer(e.pointerId, e.pointerType, e.clientX, e.clientY);
         if (e.pointerType === 'mouse' && e.button === 0) {
           this.state.firing = true;
+          this.firePointerId = e.pointerId;
           this.fireQueued = true;
-        }
-        if (this.surface.hasPointerCapture?.(e.pointerId) === false) {
-          try { this.surface.setPointerCapture?.(e.pointerId); } catch { /* synthetic events may not own a native pointer */ }
         }
       }
     });
     this.listen(this.surface, 'pointermove', (event: Event) => {
       const e = event as PointerEvent;
+      if (e.pointerId === this.floatingMovePointerId) {
+        e.preventDefault();
+        this.updateFloatingStick(e.clientX, e.clientY);
+        return;
+      }
       if (e.pointerId !== this.swipeLookId) return;
       e.preventDefault();
       this.state.lookX += (e.clientX - this.lastSwipeX) * 1.15;
@@ -69,8 +80,15 @@ export class InputController {
       this.lastSwipeY = e.clientY;
     });
     const stopSwipeLook = (e: PointerEvent) => {
+      if (e.pointerId === this.floatingMovePointerId) {
+        this.resetFloatingStick();
+        return;
+      }
       if (e.pointerId !== this.swipeLookId) return;
-      if (this.swipePointerType === 'mouse' && e.button === 0) this.state.firing = false;
+      if (e.pointerId === this.firePointerId) {
+        this.state.firing = false;
+        this.firePointerId = null;
+      }
       this.swipeLookId = null;
       this.swipePointerType = null;
     };
@@ -78,18 +96,104 @@ export class InputController {
     this.listen(this.surface, 'pointercancel', stopSwipeLook as EventListener);
     this.listen(window, 'pointerup', (event: Event) => {
       const e = event as PointerEvent;
-      if (e.button === 0) this.state.firing = false;
+      if (e.pointerId === this.firePointerId) {
+        this.state.firing = false;
+        this.firePointerId = null;
+      }
+      if (e.pointerId === this.submergePointerId) {
+        this.mobileSubmerge = false;
+        this.submergePointerId = null;
+      }
       stopSwipeLook(e);
     });
     this.listen(window, 'blur', () => {
       this.state.firing = false;
       this.state.submerge = false;
       this.mobileSubmerge = false;
+      this.firePointerId = null;
+      this.submergePointerId = null;
+      this.resetFloatingStick();
       this.keys.clear();
       this.swipeLookId = null;
       this.swipePointerType = null;
     });
     this.listen(canvas, 'contextmenu', (event: Event) => event.preventDefault());
+  }
+
+  private startLookPointer(pointerId: number, pointerType: string, clientX: number, clientY: number) {
+    if (this.swipeLookId !== null && this.swipeLookId !== pointerId) return;
+    this.swipeLookId = pointerId;
+    this.swipePointerType = pointerType;
+    this.lastSwipeX = clientX;
+    this.lastSwipeY = clientY;
+    if (this.surface.hasPointerCapture?.(pointerId) === false) {
+      try { this.surface.setPointerCapture?.(pointerId); } catch { /* synthetic events may not own a native pointer */ }
+    }
+  }
+
+  private updateLookFromControl(e: PointerEvent) {
+    if (e.pointerId !== this.swipeLookId) return;
+    e.preventDefault();
+    e.stopPropagation();
+    this.state.lookX += (e.clientX - this.lastSwipeX) * 1.15;
+    this.state.lookY -= (e.clientY - this.lastSwipeY) * 1.15;
+    this.lastSwipeX = e.clientX;
+    this.lastSwipeY = e.clientY;
+  }
+
+  private finishControlPointer(e: PointerEvent, control: 'fire' | 'submerge' | 'jump') {
+    e.preventDefault();
+    e.stopPropagation();
+    if (control === 'fire' && e.pointerId === this.firePointerId) {
+      this.state.firing = false;
+      this.firePointerId = null;
+    }
+    if (control === 'submerge' && e.pointerId === this.submergePointerId) {
+      this.mobileSubmerge = false;
+      this.submergePointerId = null;
+    }
+    if (e.pointerId === this.swipeLookId) {
+      this.swipeLookId = null;
+      this.swipePointerType = null;
+    }
+  }
+
+  private startFloatingStick(pointerId: number, clientX: number, clientY: number) {
+    if (this.floatingMovePointerId !== null) return;
+    this.floatingMovePointerId = pointerId;
+    this.floatingCenterX = clientX;
+    this.floatingCenterY = clientY;
+    if (this.mobileStick) {
+      this.mobileStick.classList.add('floating-active');
+      this.mobileStick.style.left = `${clientX}px`;
+      this.mobileStick.style.top = `${clientY}px`;
+    }
+    this.updateFloatingStick(clientX, clientY);
+  }
+
+  private updateFloatingStick(clientX: number, clientY: number) {
+    const max = 38;
+    const dx = clientX - this.floatingCenterX;
+    const dy = clientY - this.floatingCenterY;
+    const length = Math.hypot(dx, dy) || 1;
+    const scale = Math.min(1, max / length);
+    const x = dx * scale;
+    const y = dy * scale;
+    this.mobileMoveX = x / max;
+    this.mobileMoveY = -y / max;
+    if (this.mobileKnob) this.mobileKnob.style.transform = `translate(${x}px, ${y}px)`;
+  }
+
+  private resetFloatingStick() {
+    this.floatingMovePointerId = null;
+    this.mobileMoveX = 0;
+    this.mobileMoveY = 0;
+    if (this.mobileKnob) this.mobileKnob.style.transform = '';
+    if (this.mobileStick) {
+      this.mobileStick.classList.remove('floating-active');
+      this.mobileStick.style.left = '';
+      this.mobileStick.style.top = '';
+    }
   }
 
   dispose() {
@@ -102,6 +206,9 @@ export class InputController {
     this.mobileMoveY = 0;
     this.mobileSubmerge = false;
     this.state.submerge = false;
+    this.firePointerId = null;
+    this.submergePointerId = null;
+    this.resetFloatingStick();
   }
 
   update() {
@@ -136,7 +243,10 @@ export class InputController {
   bindMobileControls(root: HTMLElement) {
     const stick = root.querySelector<HTMLElement>('[data-stick]');
     const knob = root.querySelector<HTMLElement>('[data-stick-knob]');
-    if (stick && knob) {
+    this.mobileStick = stick ?? undefined;
+    this.mobileKnob = knob ?? undefined;
+    root.classList.toggle('floating-joystick', this.joystickMode === 'floating');
+    if (stick && knob && this.joystickMode === 'fixed') {
       let active = false;
       const move = (clientX: number, clientY: number) => {
         const r = stick.getBoundingClientRect();
@@ -174,25 +284,43 @@ export class InputController {
       this.listen(fire, 'pointerdown', (event: Event) => {
         const e = event as PointerEvent;
         e.preventDefault();
+        e.stopPropagation();
         this.state.firing = true;
+        this.firePointerId = e.pointerId;
         this.fireQueued = true;
-        try { fire.setPointerCapture(e.pointerId); } catch { /* synthetic event */ }
+        this.startLookPointer(e.pointerId, e.pointerType, e.clientX, e.clientY);
       });
-      this.listen(fire, 'pointerup', () => { this.state.firing = false; });
-      this.listen(fire, 'pointercancel', () => { this.state.firing = false; });
+      this.listen(fire, 'pointermove', (event: Event) => this.updateLookFromControl(event as PointerEvent));
+      this.listen(fire, 'pointerup', (event: Event) => this.finishControlPointer(event as PointerEvent, 'fire'));
+      this.listen(fire, 'pointercancel', (event: Event) => this.finishControlPointer(event as PointerEvent, 'fire'));
     }
     const submerge = root.querySelector<HTMLElement>('[data-submerge]');
     if (submerge) {
-      this.listen(submerge, 'pointerdown', (event: Event) => { const e = event as PointerEvent; e.preventDefault(); e.stopPropagation(); this.mobileSubmerge = true; });
-      this.listen(submerge, 'pointerup', () => { this.mobileSubmerge = false; });
-      this.listen(submerge, 'pointercancel', () => { this.mobileSubmerge = false; });
+      this.listen(submerge, 'pointerdown', (event: Event) => {
+        const e = event as PointerEvent;
+        e.preventDefault();
+        e.stopPropagation();
+        this.mobileSubmerge = true;
+        this.submergePointerId = e.pointerId;
+        this.startLookPointer(e.pointerId, e.pointerType, e.clientX, e.clientY);
+      });
+      this.listen(submerge, 'pointermove', (event: Event) => this.updateLookFromControl(event as PointerEvent));
+      this.listen(submerge, 'pointerup', (event: Event) => this.finishControlPointer(event as PointerEvent, 'submerge'));
+      this.listen(submerge, 'pointercancel', (event: Event) => this.finishControlPointer(event as PointerEvent, 'submerge'));
     }
     const jump = root.querySelector<HTMLElement>('[data-jump]');
-    if (jump) this.listen(jump, 'pointerdown', (event: Event) => {
-      const e = event as PointerEvent;
-      e.preventDefault();
-      this.jumpQueued = true;
-      this.state.jump = true;
-    });
+    if (jump) {
+      this.listen(jump, 'pointerdown', (event: Event) => {
+        const e = event as PointerEvent;
+        e.preventDefault();
+        e.stopPropagation();
+        this.jumpQueued = true;
+        this.state.jump = true;
+        this.startLookPointer(e.pointerId, e.pointerType, e.clientX, e.clientY);
+      });
+      this.listen(jump, 'pointermove', (event: Event) => this.updateLookFromControl(event as PointerEvent));
+      this.listen(jump, 'pointerup', (event: Event) => this.finishControlPointer(event as PointerEvent, 'jump'));
+      this.listen(jump, 'pointercancel', (event: Event) => this.finishControlPointer(event as PointerEvent, 'jump'));
+    }
   }
 }

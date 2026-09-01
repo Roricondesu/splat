@@ -105,7 +105,7 @@ export class NeonGame {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
-    this.input = new InputController(canvas);
+    this.input = new InputController(canvas, save.joystickMode);
     this.arena = createArena(this.scene, save.arena);
     this.obstacles = this.arena.obstacles;
     this.paintables = this.arena.paintables;

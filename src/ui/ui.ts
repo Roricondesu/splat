@@ -151,6 +151,7 @@ export class GameUI {
         <label><span>镜头灵敏度<em>键鼠与触控同步调整</em></span><input data-setting="sensitivity" type="range" min="0.5" max="1.8" step="0.1" value="${this.save.sensitivity}"></label>
         <label><span>音效音量<em>武器与战斗反馈</em></span><input data-setting="sfx" type="range" min="0" max="1" step="0.05" value="${this.save.sfx}"></label>
         <label><span>画面质量<em>移动端建议使用中等</em></span><select data-setting="quality"><option value="low">流畅</option><option value="medium">均衡</option><option value="high">精美</option></select></label>
+        <label><span>移动摇杆<em>固定位置或触点浮动生成</em></span><select data-setting="joystickMode"><option value="fixed">固定</option><option value="floating">浮动</option></select></label>
       </div>
       <div class="settings-note"><b>跨端提示</b><p>手机请横屏游玩；桌面端点击战场后使用鼠标控制镜头。</p></div>
       ${overGame ? '<button class="danger-btn" data-quit>退出本局</button>' : ''}
@@ -158,6 +159,7 @@ export class GameUI {
     this.root.appendChild(modal);
     (modal.querySelector('[data-setting="difficulty"]') as HTMLSelectElement).value = this.save.difficulty;
     (modal.querySelector('[data-setting="quality"]') as HTMLSelectElement).value = this.save.quality;
+    (modal.querySelector('[data-setting="joystickMode"]') as HTMLSelectElement).value = this.save.joystickMode;
     const close = () => { modal.remove(); if (!overGame) this.screen = previous; };
     modal.querySelector<HTMLElement>('.modal-close')!.onclick = close;
     modal.onclick = e => { if (e.target === modal) close(); };

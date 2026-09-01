@@ -67,6 +67,7 @@ export interface SaveData {
   sensitivity: number;
   quality: 'low' | 'medium' | 'high';
   arena: ArenaId;
+  joystickMode: 'fixed' | 'floating';
   matches: number;
   wins: number;
   coins: number;
@@ -81,6 +82,7 @@ export const DEFAULT_SAVE: SaveData = {
   sensitivity: 1,
   quality: 'high',
   arena: 'skyline-market',
+  joystickMode: 'fixed',
   matches: 0,
   wins: 0,
   coins: 1250
