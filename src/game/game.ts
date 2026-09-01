@@ -520,11 +520,13 @@ export class NeonGame {
     const speed = f.velocity.length();
     // Submerging is explicit for the player and tactical for AI. It is the only way to refill ammo.
     if (!ownPaint || !f.grounded) f.swim = false;
+    if (this.save.infiniteHealth && f.isPlayer) f.health = 100;
+    if (this.save.infiniteInk && f.isPlayer) f.ammo = 100;
     if (f.swim) f.ammo = Math.min(100, f.ammo + dt * 46);
     const outOfCombat = this.elapsed - f.lastDamagedAt >= 3;
     if (f.swim && ownPaint && outOfCombat) f.health = Math.min(100, f.health + dt * 20);
     else if (ownPaint) f.health = Math.min(100, f.health + dt * 4);
-    else if (paintHere) {
+    else if (paintHere && !(f.isPlayer && this.save.infiniteHealth)) {
       f.health = Math.max(10, f.health - dt * 11);
       f.lastDamagedAt = this.elapsed;
       f.inkStain = Math.max(f.inkStain, 0.35);
@@ -611,7 +613,7 @@ export class NeonGame {
       if (distance > damageRadius) continue;
       const falloff = 1 - distance / damageRadius;
       const damage = Math.round(26 + falloff * 34);
-      target.health -= damage;
+      if (!(target.isPlayer && this.save.infiniteHealth)) target.health -= damage;
       target.lastDamagedAt = this.elapsed;
       target.inkStain = Math.max(target.inkStain, 0.7 + falloff * 0.3);
       target.inkStainTeam = owner.team;
@@ -663,8 +665,11 @@ export class NeonGame {
 
   private tryFire(f: Fighter, direction: THREE.Vector3, intent: 'paint' | 'fight' = 'fight') {
     const w = f.weapon;
-    if (f.fireCooldown > 0 || f.ammo < w.ammoCost || !f.alive) return;
-    f.fireCooldown = w.fireRate; f.ammo -= w.ammoCost; f.recoil = 1;
+    const infiniteInk = f.isPlayer && this.save.infiniteInk;
+    if (f.fireCooldown > 0 || (!infiniteInk && f.ammo < w.ammoCost) || !f.alive) return;
+    f.fireCooldown = w.fireRate;
+    if (!infiniteInk) f.ammo -= w.ammoCost;
+    f.recoil = 1;
     f.aimPitch = THREE.MathUtils.clamp(-Math.asin(direction.y), -0.65, 0.75);
     if (!f.isPlayer) {
       if (intent === 'paint') f.aiPaintShots++;
@@ -724,8 +729,9 @@ export class NeonGame {
   }
 
   private throwWaterBomb(owner: Fighter, aim: THREE.Vector3) {
-    if (!owner.alive || owner.swim || owner.ammo < 50) return false;
-    owner.ammo -= 50;
+    const infiniteInk = owner.isPlayer && this.save.infiniteInk;
+    if (!owner.alive || owner.swim || (!infiniteInk && owner.ammo < 50)) return false;
+    if (!infiniteInk) owner.ammo -= 50;
     owner.recoil = 1;
     const material = new THREE.MeshPhysicalMaterial({
       color: TEAM_COLORS[owner.team].main,
@@ -790,7 +796,7 @@ export class NeonGame {
       if (distance > radius) continue;
       const falloff = 1 - distance / radius;
       const damage = Math.round(24 + falloff * 46);
-      fighter.health -= damage;
+      if (!(fighter.isPlayer && this.save.infiniteHealth)) fighter.health -= damage;
       fighter.lastDamagedAt = this.elapsed;
       fighter.inkStain = Math.max(fighter.inkStain, 0.72 + falloff * 0.28);
       fighter.inkStainTeam = bomb.owner.team;
@@ -838,7 +844,7 @@ export class NeonGame {
         const dz = f.group.position.z - pos.z;
         if (dx * dx + dy * dy + dz * dz < 0.7396) {
           const damage = p.weapon.damage;
-          f.health -= damage;
+          if (!(f.isPlayer && this.save.infiniteHealth)) f.health -= damage;
           f.lastDamagedAt = this.elapsed;
           f.inkStain = 1;
           f.inkStainTeam = p.owner.team;

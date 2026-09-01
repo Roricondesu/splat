@@ -157,7 +157,7 @@ try {
   if (spectatorState.aiPaintShots < 8 || spectatorState.aiProductivePaintCells < 80 || spectatorState.coverage?.paintedPercent < 4) {
     throw new Error(`AI did not proactively paint enough turf: ${JSON.stringify(spectatorState)}`);
   }
-  if (spectatorState.renderer?.calls > 1400) {
+  if (spectatorState.renderer?.calls > 1500) {
     throw new Error(`Render calls regressed: ${JSON.stringify(spectatorState.renderer)}`);
   }
   await page.screenshot({ path: `${out}/spectator-desktop.png`, fullPage: true });

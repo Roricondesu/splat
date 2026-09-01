@@ -152,6 +152,8 @@ export class GameUI {
         <label><span>音效音量<em>武器与战斗反馈</em></span><input data-setting="sfx" type="range" min="0" max="1" step="0.05" value="${this.save.sfx}"></label>
         <label><span>画面质量<em>移动端建议使用中等</em></span><select data-setting="quality"><option value="low">流畅</option><option value="medium">均衡</option><option value="high">精美</option></select></label>
         <label><span>移动摇杆<em>固定位置或触点浮动生成</em></span><select data-setting="joystickMode"><option value="fixed">固定</option><option value="floating">浮动</option></select></label>
+        <label><span>无限墨水<em>武器和水气球不消耗墨水</em></span><select data-setting="infiniteInk"><option value="false">关闭</option><option value="true">开启</option></select></label>
+        <label><span>无限血量<em>玩家不会受到伤害或被淘汰</em></span><select data-setting="infiniteHealth"><option value="false">关闭</option><option value="true">开启</option></select></label>
       </div>
       <div class="settings-note"><b>跨端提示</b><p>手机请横屏游玩；桌面端点击战场后使用鼠标控制镜头。</p></div>
       ${overGame ? '<button class="danger-btn" data-quit>退出本局</button>' : ''}
@@ -160,12 +162,15 @@ export class GameUI {
     (modal.querySelector('[data-setting="difficulty"]') as HTMLSelectElement).value = this.save.difficulty;
     (modal.querySelector('[data-setting="quality"]') as HTMLSelectElement).value = this.save.quality;
     (modal.querySelector('[data-setting="joystickMode"]') as HTMLSelectElement).value = this.save.joystickMode;
+    (modal.querySelector('[data-setting="infiniteInk"]') as HTMLSelectElement).value = String(this.save.infiniteInk);
+    (modal.querySelector('[data-setting="infiniteHealth"]') as HTMLSelectElement).value = String(this.save.infiniteHealth);
     const close = () => { modal.remove(); if (!overGame) this.screen = previous; };
     modal.querySelector<HTMLElement>('.modal-close')!.onclick = close;
     modal.onclick = e => { if (e.target === modal) close(); };
     modal.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-setting]').forEach(el => el.onchange = () => {
       const key = el.dataset.setting as keyof SaveData;
-      (this.save as any)[key] = el instanceof HTMLInputElement ? Number(el.value) : el.value;
+      const booleanSetting = key === 'infiniteInk' || key === 'infiniteHealth';
+      (this.save as any)[key] = booleanSetting ? el.value === 'true' : el instanceof HTMLInputElement ? Number(el.value) : el.value;
       this.persist();
     });
     modal.querySelector<HTMLElement>('[data-quit]')?.addEventListener('click', () => { close(); this.actions.quitGame(); });

@@ -68,6 +68,8 @@ export interface SaveData {
   quality: 'low' | 'medium' | 'high';
   arena: ArenaId;
   joystickMode: 'fixed' | 'floating';
+  infiniteInk: boolean;
+  infiniteHealth: boolean;
   matches: number;
   wins: number;
   coins: number;
@@ -83,6 +85,8 @@ export const DEFAULT_SAVE: SaveData = {
   quality: 'high',
   arena: 'skyline-market',
   joystickMode: 'fixed',
+  infiniteInk: false,
+  infiniteHealth: false,
   matches: 0,
   wins: 0,
   coins: 1250
