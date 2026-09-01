@@ -173,6 +173,7 @@ export class NeonGame {
       f.aiNextPaintShotAt = 0.12 + Math.random() * 0.28; f.aiPaintShots = 0; f.aiFightShots = 0; f.aiProductivePaintCells = 0;
       f.aiStuckTime = 0; f.aiLastPosX = f.spawn.x; f.aiLastPosZ = f.spawn.z; f.aiSteerBias = 0; f.aiSteerUntil = 0;
       f.aiJumpCooldown = 0.35 + Math.random() * 0.45; f.aiJumpCount = 0;
+      f.lastDamagedAt = -Infinity; f.inkStain = 0; f.inkStainTeam = null; f.rollerHitCooldown = 0;
       f.lastRollerPaintX = f.spawn.x; f.lastRollerPaintZ = f.spawn.z;
       resetFighterPose(f);
       if (f.isPlayer) f.group.rotation.y = this.cameraYaw + Math.PI;
@@ -207,7 +208,7 @@ export class NeonGame {
       teamSize: this.arena.teamSize,
       worldSize: this.arena.worldSize,
       activeAI: this.fighters.filter(f => !f.isPlayer).length,
-      aiPositions: this.fighters.filter(f => !f.isPlayer).map(f => ({ id: f.id, x: f.group.position.x, y: f.group.position.y, z: f.group.position.z, grounded: f.grounded, mode: f.aiMode, colliding: f.grounded && this.collides(f.group.position.x, f.group.position.z, f.group.position.y, 0.12) })),
+      aiPositions: this.fighters.filter(f => !f.isPlayer).map(f => ({ id: f.id, x: f.group.position.x, y: f.group.position.y, z: f.group.position.z, health: f.health, stain: f.inkStain, stainTeam: f.inkStainTeam, grounded: f.grounded, mode: f.aiMode, colliding: f.grounded && this.collides(f.group.position.x, f.group.position.z, f.group.position.y, 0.12) })),
       aiCollisionViolations: this.fighters.filter(f => !f.isPlayer && f.grounded && this.collides(f.group.position.x, f.group.position.z, f.group.position.y, 0.12)).length,
       coverage: this.paint.coverage(),
       aiModes: this.fighters.filter(f => !f.isPlayer).reduce((modes, fighter) => {
@@ -219,6 +220,8 @@ export class NeonGame {
       aiJumpCount: this.fighters.reduce((sum, fighter) => sum + fighter.aiJumpCount, 0),
       aiSubmergedCount: this.fighters.filter(fighter => !fighter.isPlayer && fighter.swim).length,
       aiAverageAmmo: this.fighters.filter(fighter => !fighter.isPlayer).reduce((sum, fighter, _, ai) => sum + fighter.ammo / Math.max(1, ai.length), 0),
+      stainedFighters: this.fighters.filter(fighter => fighter.inkStain > 0.05).map(fighter => ({ id: fighter.id, team: fighter.inkStainTeam, amount: fighter.inkStain })),
+      playerLastDamagedAt: this.player.lastDamagedAt,
       aiProductivePaintCells: this.fighters.reduce((sum, fighter) => sum + fighter.aiProductivePaintCells, 0),
       projectiles: this.projectiles.length,
       waterBombs: this.waterBombs.length,
@@ -232,6 +235,7 @@ export class NeonGame {
         tailCount: projectile.tail.length
       })),
       playerWeapon: this.player.weapon.id,
+      playerHealth: this.player.health,
       playerAmmo: this.player.ammo,
       playerShotCount: this.playerShotCount,
       playerLastShotPellets: this.playerLastShotPellets,
@@ -261,6 +265,18 @@ export class NeonGame {
 
   debugFinishMatch() {
     if (location.hostname === 'localhost') this.matchTime = 0;
+  }
+
+  debugSetPlayerHealth(health: number) {
+    if (location.hostname !== 'localhost') return false;
+    this.player.health = THREE.MathUtils.clamp(health, 1, 100);
+    return true;
+  }
+
+  debugSetPlayerLastDamaged(secondsAgo: number) {
+    if (location.hostname !== 'localhost') return false;
+    this.player.lastDamagedAt = this.elapsed - Math.max(0, secondsAgo);
+    return true;
   }
 
   debugThrowWaterBomb() {
@@ -494,6 +510,7 @@ export class NeonGame {
 
   private updateFighterCommon(f: Fighter, dt: number, time: number) {
     f.fireCooldown -= dt;
+    f.rollerHitCooldown = Math.max(0, f.rollerHitCooldown - dt);
     if (!f.alive) {
       if (time >= f.respawnAt) this.respawn(f);
       return;
@@ -504,8 +521,15 @@ export class NeonGame {
     // Submerging is explicit for the player and tactical for AI. It is the only way to refill ammo.
     if (!ownPaint || !f.grounded) f.swim = false;
     if (f.swim) f.ammo = Math.min(100, f.ammo + dt * 46);
-    if (ownPaint) f.health = Math.min(100, f.health + dt * 4);
-    else if (paintHere) f.health = Math.max(10, f.health - dt * 11);
+    const outOfCombat = this.elapsed - f.lastDamagedAt >= 3;
+    if (f.swim && ownPaint && outOfCombat) f.health = Math.min(100, f.health + dt * 20);
+    else if (ownPaint) f.health = Math.min(100, f.health + dt * 4);
+    else if (paintHere) {
+      f.health = Math.max(10, f.health - dt * 11);
+      f.lastDamagedAt = this.elapsed;
+      f.inkStain = Math.max(f.inkStain, 0.35);
+      f.inkStainTeam = paintHere;
+    }
     if (f.swim && Math.random() < dt * 8) this.spawnGroundRing(f.group.position, f.team, 0.34, 1.15, 0.3);
     animateFighter(f, time, speed, dt);
   }
@@ -569,9 +593,36 @@ export class NeonGame {
         const radius = f.weapon.id === 'brush' ? 0.95 : 1.35;
         const strength = f.weapon.id === 'brush' ? 0.7 : 0.85;
         this.paint.paint(f.group.position.x, f.group.position.z, radius, f.team, strength, 'roller', f.velocity.x, f.velocity.z);
+        if (f.weapon.id === 'roller') this.applyRollerContactDamage(f, radius);
         f.lastRollerPaintX = f.group.position.x;
         f.lastRollerPaintZ = f.group.position.z;
       }
+    }
+  }
+
+  private applyRollerContactDamage(owner: Fighter, paintRadius: number) {
+    if (owner.rollerHitCooldown > 0) return;
+    const damageRadius = paintRadius;
+    for (const target of this.fighters) {
+      if (!target.alive || target.team === owner.team) continue;
+      const dx = target.group.position.x - owner.group.position.x;
+      const dz = target.group.position.z - owner.group.position.z;
+      const distance = Math.hypot(dx, dz);
+      if (distance > damageRadius) continue;
+      const falloff = 1 - distance / damageRadius;
+      const damage = Math.round(26 + falloff * 34);
+      target.health -= damage;
+      target.lastDamagedAt = this.elapsed;
+      target.inkStain = Math.max(target.inkStain, 0.7 + falloff * 0.3);
+      target.inkStainTeam = owner.team;
+      target.hitFlash = 0.25;
+      target.velocity.add(this.scratchA.set(dx, 0, dz).normalize().multiplyScalar(4.5 + falloff * 2));
+      const eliminated = target.health <= 0;
+      this.spawnHitBurst(target.group.position.clone().add(new THREE.Vector3(0, 0.9, 0)), owner.team, this.scratchA, eliminated);
+      if (owner.isPlayer) this.callbacks.onHit(damage, eliminated);
+      if (eliminated) this.eliminate(target, owner);
+      owner.rollerHitCooldown = 0.45;
+      break;
     }
   }
 
@@ -740,6 +791,9 @@ export class NeonGame {
       const falloff = 1 - distance / radius;
       const damage = Math.round(24 + falloff * 46);
       fighter.health -= damage;
+      fighter.lastDamagedAt = this.elapsed;
+      fighter.inkStain = Math.max(fighter.inkStain, 0.72 + falloff * 0.28);
+      fighter.inkStainTeam = bomb.owner.team;
       fighter.hitFlash = 0.3;
       fighter.velocity.add(this.scratchA.set(dx, 0, dz).normalize().multiplyScalar(4 + falloff * 3));
       const eliminated = fighter.health <= 0;
@@ -785,6 +839,9 @@ export class NeonGame {
         if (dx * dx + dy * dy + dz * dz < 0.7396) {
           const damage = p.weapon.damage;
           f.health -= damage;
+          f.lastDamagedAt = this.elapsed;
+          f.inkStain = 1;
+          f.inkStainTeam = p.owner.team;
           f.hitFlash = 0.24;
           f.velocity.add(p.velocity.clone().setY(0).normalize().multiplyScalar(p.weapon.id === 'roller' ? 4.4 : 2.1));
           remove = true;
@@ -1018,6 +1075,7 @@ export class NeonGame {
   private respawn(f: Fighter) {
     f.alive = true; f.group.visible = true; f.health = 100; f.ammo = 100; f.group.position.copy(f.spawn); f.velocity.set(0, 0, 0); f.spawnPulse = 1;
     f.verticalVelocity = 0; f.grounded = true; f.previousGrounded = true; f.landingPulse = 0;
+    f.lastDamagedAt = -Infinity; f.rollerHitCooldown = 0;
     f.aiJumpCooldown = 0.5;
     resetFighterPose(f);
     if (f.isPlayer) f.group.rotation.y = this.cameraYaw + Math.PI;

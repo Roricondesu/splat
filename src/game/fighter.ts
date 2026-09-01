@@ -40,6 +40,10 @@ export interface Fighter {
   aiSteerUntil: number;
   aiJumpCooldown: number;
   aiJumpCount: number;
+  lastDamagedAt: number;
+  inkStain: number;
+  inkStainTeam: Team | null;
+  rollerHitCooldown: number;
   aimPitch: number;
   lastRollerPaintX: number;
   lastRollerPaintZ: number;
@@ -61,6 +65,7 @@ interface FighterRig {
   tankInk: THREE.Mesh;
   blobShadow: THREE.Mesh;
   ring: THREE.Mesh;
+  inkStain: THREE.Mesh;
 }
 
 const BASE_VISUAL_SCALE_XZ = 0.78;
@@ -467,6 +472,15 @@ export function createFighter(
   rightArm.rotation.set(-1.18, 0, -0.22);
   leftArm.rotation.set(-0.95, 0, 0.42);
 
+  const inkStain = new THREE.Mesh(
+    new THREE.SphereGeometry(0.48, 12, 8),
+    new THREE.MeshPhysicalMaterial({ color: colors.main, transparent: true, opacity: 0, roughness: 0.12, clearcoat: 1, depthWrite: false })
+  );
+  inkStain.scale.set(1.05, 1.35, 0.72);
+  inkStain.position.set(0, 1.22, 0.08);
+  inkStain.renderOrder = 9;
+  visual.add(inkStain);
+
   // Team ring + soft blob shadow.
   const ring = new THREE.Mesh(
     new THREE.RingGeometry(0.58, 0.7, 28),
@@ -485,7 +499,7 @@ export function createFighter(
 
   group.position.copy(spawn);
   group.userData.fighterId = id;
-  group.userData.rig = { visual, torso, head, hair, leftEye, rightEye, leftArm, rightArm, leftLeg, rightLeg, weapon, backpack, tankInk, blobShadow, ring } satisfies FighterRig;
+  group.userData.rig = { visual, torso, head, hair, leftEye, rightEye, leftArm, rightArm, leftLeg, rightLeg, weapon, backpack, tankInk, blobShadow, ring, inkStain } satisfies FighterRig;
 
   return {
     id,
@@ -526,6 +540,10 @@ export function createFighter(
     aiSteerUntil: 0,
     aiJumpCooldown: 0,
     aiJumpCount: 0,
+    lastDamagedAt: -Infinity,
+    inkStain: 0,
+    inkStainTeam: null,
+    rollerHitCooldown: 0,
     aimPitch: 0,
     lastRollerPaintX: spawn.x,
     lastRollerPaintZ: spawn.z
@@ -553,6 +571,9 @@ export function resetFighterPose(fighter: Fighter) {
   rig.weapon.position.set(0.42, 1.04, 0.48);
   rig.weapon.rotation.set(-0.12, -0.12, 0);
   rig.backpack.rotation.set(0, 0, 0);
+  fighter.inkStain = 0;
+  fighter.inkStainTeam = null;
+  (rig.inkStain.material as THREE.MeshPhysicalMaterial).opacity = 0;
 }
 
 export function animateFighter(fighter: Fighter, time: number, speed: number, dt: number) {
@@ -624,6 +645,13 @@ export function animateFighter(fighter: Fighter, time: number, speed: number, dt
   rig.leftArm.rotation.x += aim * 0.28;
   rig.head.rotation.x -= aim * 0.32;
   rig.backpack.rotation.x = Math.sin(phase) * 0.035 * moveAmount + swim * 0.2;
+
+  fighter.inkStain = Math.max(0, fighter.inkStain - dt * 0.24);
+  const stainMaterial = rig.inkStain.material as THREE.MeshPhysicalMaterial;
+  if (fighter.inkStainTeam) stainMaterial.color.setHex(TEAM_COLORS[fighter.inkStainTeam].main);
+  stainMaterial.opacity = fighter.inkStain * 0.62;
+  rig.inkStain.visible = fighter.inkStain > 0.01;
+  rig.inkStain.rotation.y += dt * 0.32;
 
   // Backpack ink level tracks ammo.
   const inkRatio = THREE.MathUtils.clamp(fighter.ammo / 100, 0.12, 1);
