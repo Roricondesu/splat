@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { OutfitSpec, Team, TEAM_COLORS, WeaponSpec } from './config';
+import { HairstyleId, OutfitSpec, Team, TEAM_COLORS, WeaponSpec } from './config';
 
 export interface Fighter {
   id: number;
@@ -259,7 +259,8 @@ export function createFighter(
   isPlayer: boolean,
   weaponSpec: WeaponSpec,
   spawn: THREE.Vector3,
-  outfit?: OutfitSpec
+  outfit?: OutfitSpec,
+  selectedHairstyle?: HairstyleId
 ): Fighter {
   const group = new THREE.Group();
   const visual = new THREE.Group();
@@ -377,7 +378,7 @@ export function createFighter(
   // Team-ink anime hair: every hairstyle uses the fighter's current team color.
   const hair = new THREE.Group();
   head.add(hair);
-  const hairstyle = outfit?.hairstyle ?? 'short';
+  const hairstyle = selectedHairstyle ?? 'short';
   const hairCap = outlinedMesh(new THREE.SphereGeometry(0.56, 14, 10, 0, Math.PI * 2, 0, Math.PI * (hairstyle === 'bob' || hairstyle === 'long' ? 0.68 : 0.56)), hairMat);
   hairCap.scale.set(0.99, hairstyle === 'spiky' ? 0.68 : 0.78, 0.99);
   hairCap.position.y = 0.13;
@@ -410,6 +411,19 @@ export function createFighter(
       const bead = outlinedMesh(new THREE.SphereGeometry(0.11 - i * 0.012, 8, 6), hairMat);
       bead.position.set(0.34, -0.06 - i * 0.18, -0.28);
       hair.add(bead);
+    }
+  } else if (hairstyle === 'side-tail') addHairTail(0.44, -0.1, -0.2, 0.7, -0.5);
+  else if (hairstyle === 'wolf') {
+    addHairTail(-0.22, -0.22, -0.38, 0.48, 0.16);
+    addHairTail(0.22, -0.22, -0.38, 0.48, -0.16);
+  } else if (hairstyle === 'hime') {
+    for (const x of [-0.36, -0.18, 0, 0.18, 0.36]) addHairTail(x, -0.22, -0.34, 0.78, x * -0.18);
+  } else if (hairstyle === 'curly') {
+    for (const side of [-1, 1]) for (let i = 0; i < 3; i++) {
+      const curl = outlinedMesh(new THREE.TorusGeometry(0.13 + i * 0.015, 0.045, 6, 11, Math.PI * 1.55), hairMat);
+      curl.position.set(side * (0.38 + i * 0.025), 0.05 - i * 0.18, -0.14);
+      curl.rotation.z = side * 0.28;
+      hair.add(curl);
     }
   }
 

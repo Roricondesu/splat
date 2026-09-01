@@ -60,24 +60,47 @@ export interface OutfitSpec {
   style: 'hoodie' | 'jacket' | 'jersey' | 'coat';
   bottoms: 'shorts' | 'skirt' | 'pants';
   accessory: 'none' | 'headphones' | 'visor';
-  hairstyle: 'short' | 'bob' | 'ponytail' | 'twin-tail' | 'long' | 'bun' | 'spiky' | 'braid';
   footwear: 'sneakers' | 'boots' | 'high-tops';
 }
 
+export type HairstyleId = 'short' | 'bob' | 'ponytail' | 'twin-tail' | 'long' | 'bun' | 'spiky' | 'braid' | 'side-tail' | 'wolf' | 'hime' | 'curly';
+
+export interface HairstyleSpec {
+  id: HairstyleId;
+  name: string;
+  desc: string;
+}
+
+export const HAIRSTYLES: HairstyleSpec[] = [
+  { id: 'short', name: '清爽短发', desc: '轻盈分层短发' },
+  { id: 'bob', name: '圆润波波', desc: '齐颈动漫波波头' },
+  { id: 'ponytail', name: '活力马尾', desc: '高位运动马尾' },
+  { id: 'twin-tail', name: '双马尾', desc: '左右对称长双马尾' },
+  { id: 'long', name: '柔顺长发', desc: '背部垂落长发' },
+  { id: 'bun', name: '丸子头', desc: '顶部圆润发髻' },
+  { id: 'spiky', name: '动感刺发', desc: '向上放射短刺发' },
+  { id: 'braid', name: '侧边编发', desc: '连续珠节编发' },
+  { id: 'side-tail', name: '侧马尾', desc: '单侧长马尾' },
+  { id: 'wolf', name: '狼尾发', desc: '短顶长后层次' },
+  { id: 'hime', name: '姬发式', desc: '齐刘海长直发' },
+  { id: 'curly', name: '蓬松卷发', desc: '双侧柔软卷发' }
+];
+
 export const OUTFITS: OutfitSpec[] = [
-  { id: 'night-runner', name: '夜行速递', desc: '反光运动夹克', primary: '#101e31', accent: '#16e0d0', style: 'jacket', bottoms: 'pants', accessory: 'headphones', hairstyle: 'short', footwear: 'sneakers' },
-  { id: 'acid-pop', name: '酸性波普', desc: '荧光宽松卫衣', primary: '#b8ff3d', accent: '#17212b', style: 'hoodie', bottoms: 'shorts', accessory: 'none', hairstyle: 'spiky', footwear: 'high-tops' },
-  { id: 'sunset-club', name: '落日俱乐部', desc: '橙紫街头球衣', primary: '#ff6b2c', accent: '#8c7dff', style: 'jersey', bottoms: 'shorts', accessory: 'visor', hairstyle: 'ponytail', footwear: 'sneakers' },
-  { id: 'mono-tag', name: '黑白标签', desc: '极简长款风衣', primary: '#edf5f7', accent: '#17212b', style: 'coat', bottoms: 'pants', accessory: 'none', hairstyle: 'bob', footwear: 'boots' },
-  { id: 'aqua-campus', name: '水色学园', desc: '清爽水手夹克', primary: '#d9fbff', accent: '#148fa8', style: 'jacket', bottoms: 'skirt', accessory: 'none', hairstyle: 'twin-tail', footwear: 'high-tops' },
-  { id: 'berry-beat', name: '莓果节拍', desc: '舞台短款球衣', primary: '#d92f86', accent: '#ffd4ef', style: 'jersey', bottoms: 'skirt', accessory: 'headphones', hairstyle: 'long', footwear: 'boots' },
-  { id: 'urban-moss', name: '苔城机能', desc: '军绿机能外套', primary: '#3c5948', accent: '#c8ef7a', style: 'coat', bottoms: 'pants', accessory: 'visor', hairstyle: 'braid', footwear: 'boots' },
-  { id: 'cloud-candy', name: '云朵糖霜', desc: '粉蓝蓬松卫衣', primary: '#a9c8ff', accent: '#ff9fd5', style: 'hoodie', bottoms: 'shorts', accessory: 'none', hairstyle: 'bun', footwear: 'high-tops' }
+  { id: 'night-runner', name: '夜行速递', desc: '反光运动夹克', primary: '#101e31', accent: '#16e0d0', style: 'jacket', bottoms: 'pants', accessory: 'headphones', footwear: 'sneakers' },
+  { id: 'acid-pop', name: '酸性波普', desc: '荧光宽松卫衣', primary: '#b8ff3d', accent: '#17212b', style: 'hoodie', bottoms: 'shorts', accessory: 'none', footwear: 'high-tops' },
+  { id: 'sunset-club', name: '落日俱乐部', desc: '橙紫街头球衣', primary: '#ff6b2c', accent: '#8c7dff', style: 'jersey', bottoms: 'shorts', accessory: 'visor', footwear: 'sneakers' },
+  { id: 'mono-tag', name: '黑白标签', desc: '极简长款风衣', primary: '#edf5f7', accent: '#17212b', style: 'coat', bottoms: 'pants', accessory: 'none', footwear: 'boots' },
+  { id: 'aqua-campus', name: '水色学园', desc: '清爽水手夹克', primary: '#d9fbff', accent: '#148fa8', style: 'jacket', bottoms: 'skirt', accessory: 'none', footwear: 'high-tops' },
+  { id: 'berry-beat', name: '莓果节拍', desc: '舞台短款球衣', primary: '#d92f86', accent: '#ffd4ef', style: 'jersey', bottoms: 'skirt', accessory: 'headphones', footwear: 'boots' },
+  { id: 'urban-moss', name: '苔城机能', desc: '军绿机能外套', primary: '#3c5948', accent: '#c8ef7a', style: 'coat', bottoms: 'pants', accessory: 'visor', footwear: 'boots' },
+  { id: 'cloud-candy', name: '云朵糖霜', desc: '粉蓝蓬松卫衣', primary: '#a9c8ff', accent: '#ff9fd5', style: 'hoodie', bottoms: 'shorts', accessory: 'none', footwear: 'high-tops' }
 ];
 
 export interface SaveData {
   weapon: WeaponId;
   outfit: string;
+  hairstyle: HairstyleId;
   difficulty: Difficulty;
   music: number;
   sfx: number;
@@ -95,6 +118,7 @@ export interface SaveData {
 export const DEFAULT_SAVE: SaveData = {
   weapon: 'pulse',
   outfit: 'night-runner',
+  hairstyle: 'short',
   difficulty: 'standard',
   music: 0.65,
   sfx: 0.8,

@@ -28,13 +28,16 @@ try {
   const weapons = await page.locator('.weapon-card').count();
   if (weapons < 8) throw new Error(`Expected at least 8 weapons, found ${weapons}`);
   const outfits = await page.locator('.outfit-card').count();
-  if (outfits < 8) throw new Error(`Expected at least 8 outfits and hairstyles, found ${outfits}`);
+  const hairstyles = await page.locator('.hair-card').count();
+  if (outfits < 8 || hairstyles < 12) throw new Error(`Expected free outfit/hair choices, found outfits=${outfits}, hairstyles=${hairstyles}`);
   await page.locator('[data-weapon="burst"]').click();
   await page.locator('[data-outfit="acid-pop"]').click();
+  await page.locator('[data-hairstyle="twin-tail"]').click();
   const savedLoadout = await page.evaluate(() => {
     const save = JSON.parse(localStorage.getItem('neon-turf-save') || '{}');
-    return { weapon: save.weapon, outfit: save.outfit };
+    return { weapon: save.weapon, outfit: save.outfit, hairstyle: save.hairstyle };
   });
+  if (savedLoadout.outfit !== 'acid-pop' || savedLoadout.hairstyle !== 'twin-tail') throw new Error(`Outfit and hairstyle did not persist independently: ${JSON.stringify(savedLoadout)}`);
   await page.screenshot({ path: `${out}/loadout-desktop.png`, fullPage: true });
   await page.click('[data-action="back"]');
   await page.click('[data-action="start"]');

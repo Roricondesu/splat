@@ -1,4 +1,4 @@
-import { ARENAS, ArenaId, DEFAULT_SAVE, Difficulty, OutfitSpec, OUTFITS, SaveData, WEAPONS, WeaponId } from '../game/config';
+import { ARENAS, ArenaId, DEFAULT_SAVE, Difficulty, HAIRSTYLES, OutfitSpec, OUTFITS, SaveData, WEAPONS, WeaponId } from '../game/config';
 import { GameStats } from '../game/game';
 
 export type Screen = 'loading' | 'home' | 'loadout' | 'settings' | 'game' | 'result';
@@ -41,6 +41,7 @@ export class GameUI {
     this.screen = 'home';
     const weapon = WEAPONS.find(w => w.id === this.save.weapon)!;
     const outfit = OUTFITS.find(o => o.id === this.save.outfit)!;
+    const hair = HAIRSTYLES.find(h => h.id === this.save.hairstyle) ?? HAIRSTYLES[0];
     const arena = ARENAS.find(item => item.id === this.save.arena) ?? ARENAS[0];
     const modeLabel = `${arena.teamSize}v${arena.teamSize}`;
     this.root.innerHTML = `
@@ -69,12 +70,12 @@ export class GameUI {
           </section>
           <section class="hero-stage">
             <div class="character-card">
-              ${this.characterPreview(outfit.primary, outfit.accent)}
+              ${this.characterPreview(outfit.primary, outfit.accent, this.save.hairstyle)}
               <div class="sticker sticker-new">NEW<br/>DROP!</div>
               <div class="sticker sticker-squad">${modeLabel}<br/>AI SQUAD</div>
               <div class="loadout-strip glass">
                 <span class="weapon-glyph">${weapon.icon}</span>
-                <div><small>当前搭配</small><strong>${outfit.name} · ${weapon.name}</strong><em>${outfit.desc} / ${weapon.subtitle}</em></div>
+                <div><small>当前自由搭配</small><strong>${outfit.name} · ${hair.name}</strong><em>${outfit.desc} / ${weapon.name}</em></div>
                 <button data-action="loadout">穿搭</button>
               </div>
             </div>
@@ -97,6 +98,7 @@ export class GameUI {
     this.screen = 'loadout';
     const selectedWeapon = WEAPONS.find(w => w.id === this.save.weapon)!;
     const selectedOutfit = OUTFITS.find(o => o.id === this.save.outfit)!;
+    const selectedHair = HAIRSTYLES.find(h => h.id === this.save.hairstyle) ?? HAIRSTYLES[0];
     this.root.innerHTML = `
       <div class="screen panel-screen">
         <div class="panel-bg"></div>
@@ -104,8 +106,8 @@ export class GameUI {
         <div class="loadout-layout">
           <aside class="workshop-preview glass">
             <div class="preview-label">PLAYER 01</div>
-            ${this.characterPreview(selectedOutfit.primary, selectedOutfit.accent, true)}
-            <div class="equipped-tag">已装备 · ${selectedOutfit.name}</div>
+            ${this.characterPreview(selectedOutfit.primary, selectedOutfit.accent, this.save.hairstyle, true)}
+            <div class="equipped-tag">已装备 · ${selectedOutfit.name} / ${selectedHair.name}</div>
           </aside>
           <main class="catalog">
             <div class="catalog-section">
@@ -118,10 +120,17 @@ export class GameUI {
                 </button>`).join('')}</div>
             </div>
             <div class="catalog-section">
-              <div class="section-heading"><div><small>BUILD YOUR ANIME LOOK</small><h3>服装与发型</h3></div><span>${OUTFITS.length} LOOKS</span></div>
+              <div class="section-heading"><div><small>MIX CLOTHING FREELY</small><h3>独立选择服装</h3></div><span>${OUTFITS.length} OUTFITS</span></div>
               <div class="outfit-grid">${OUTFITS.map(o => `
                 <button class="outfit-card ${o.id === this.save.outfit ? 'selected' : ''}" data-outfit="${o.id}">
-                  <span class="fabric" style="--p:${o.primary};--a:${o.accent}" data-style="${o.style}" data-hair="${o.hairstyle}"></span><strong>${o.name}</strong><small>${o.desc}</small><em>${this.outfitMeta(o)}</em><span class="check">✓</span>
+                  <span class="fabric" style="--p:${o.primary};--a:${o.accent}" data-style="${o.style}"></span><strong>${o.name}</strong><small>${o.desc}</small><em>${this.outfitMeta(o)}</em><span class="check">✓</span>
+                </button>`).join('')}</div>
+            </div>
+            <div class="catalog-section hair-section">
+              <div class="section-heading"><div><small>MIX ANY HAIR WITH ANY OUTFIT</small><h3>自由选择发型</h3></div><span>${HAIRSTYLES.length} STYLES</span></div>
+              <div class="hair-grid">${HAIRSTYLES.map(h => `
+                <button class="hair-card ${h.id === this.save.hairstyle ? 'selected' : ''}" data-hairstyle="${h.id}">
+                  <span class="hair-preview hair-${h.id}"><i></i><b></b></span><strong>${h.name}</strong><small>${h.desc}</small><span class="check">✓</span>
                 </button>`).join('')}</div>
             </div>
           </main>
@@ -136,6 +145,7 @@ export class GameUI {
       </div>`;
     this.root.querySelectorAll<HTMLElement>('[data-weapon]').forEach(el => el.onclick = () => { this.save.weapon = el.dataset.weapon as WeaponId; this.persist(); this.showLoadout(); });
     this.root.querySelectorAll<HTMLElement>('[data-outfit]').forEach(el => el.onclick = () => { this.save.outfit = el.dataset.outfit!; this.persist(); this.showLoadout(); });
+    this.root.querySelectorAll<HTMLElement>('[data-hairstyle]').forEach(el => el.onclick = () => { this.save.hairstyle = el.dataset.hairstyle as SaveData['hairstyle']; this.persist(); this.showLoadout(); });
     this.bindCommon();
   }
 
@@ -410,8 +420,7 @@ export class GameUI {
   private outfitMeta(outfit: OutfitSpec) {
     const style = { hoodie: '卫衣', jacket: '夹克', jersey: '球衣', coat: '风衣' }[outfit.style];
     const bottoms = { shorts: '短裤', skirt: '裙装', pants: '长裤' }[outfit.bottoms];
-    const hair = { short: '短发', bob: '波波头', ponytail: '马尾', 'twin-tail': '双马尾', long: '长发', bun: '丸子头', spiky: '刺发', braid: '编发' }[outfit.hairstyle];
-    return `${style} · ${bottoms} · ${hair}`;
+    return `${style} · ${bottoms}`;
   }
 
   private bindCommon() {
@@ -424,9 +433,9 @@ export class GameUI {
     this.root.querySelector<HTMLElement>('[data-action="settings"]')?.addEventListener('click', () => this.showSettings());
   }
 
-  private characterPreview(primary: string, accent: string, large = false) {
+  private characterPreview(primary: string, accent: string, hairstyle: SaveData['hairstyle'], large = false) {
     return `<div class="avatar-preview ${large ? 'large' : ''}" style="--avatar-primary:${primary};--avatar-accent:${accent}">
-      <div class="avatar-shadow"></div><div class="avatar-leg l"></div><div class="avatar-leg r"></div><div class="avatar-body"></div><div class="avatar-arm l"></div><div class="avatar-arm r"></div><div class="avatar-head"><i class="hair h1"></i><i class="hair h2"></i><i class="hair h3"></i><b class="visor"></b></div><div class="avatar-gun"><i></i></div>
+      <div class="avatar-shadow"></div><div class="avatar-leg l"></div><div class="avatar-leg r"></div><div class="avatar-body"></div><div class="avatar-arm l"></div><div class="avatar-arm r"></div><div class="avatar-head"><span class="avatar-hair-style hair-${hairstyle}"><i></i><b></b></span><b class="visor"></b></div><div class="avatar-gun"><i></i></div>
     </div>`;
   }
 }
