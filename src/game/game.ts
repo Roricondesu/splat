@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
 import { ArenaBuild, createArena } from './arena';
-import { Difficulty, HAIRSTYLES, OUTFITS, SaveData, TEAM_COLORS, Team, WEAPONS, WeaponSpec } from './config';
+import { Difficulty, HAIRSTYLES, OUTFITS, SaveData, TEAM_COLORS, TEAM_ORDER, Team, WEAPONS, WeaponSpec } from './config';
 import { animateFighter, createFighter, Fighter, resetFighterPose } from './fighter';
 import { InputController } from './input';
 import { PaintField } from './paintField';
@@ -47,6 +47,7 @@ export interface GameStats {
   time: number;
   cyan: number;
   orange: number;
+  teams: Partial<Record<Team, number>>;
   health: number;
   ammo: number;
   score: number;
@@ -124,17 +125,14 @@ export class NeonGame {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.input = new InputController(canvas, save.joystickMode);
-    this.arena = createArena(this.scene, save.arena);
+    this.arena = createArena(this.scene, save.arena, save.customMode);
     this.obstacles = this.arena.obstacles;
     this.paintables = this.arena.paintables;
     this.walkables = this.arena.walkables;
     this.scene.updateMatrixWorld(true);
     this.obstacleBoxes = this.obstacles.map(object => new THREE.Box3().setFromObject(object));
     this.surfaceSplatTexture = this.createSurfaceSplatTexture();
-    this.decalMaterials = {
-      cyan: new THREE.MeshPhysicalMaterial({ color: TEAM_COLORS.cyan.main, alphaMap: this.surfaceSplatTexture, transparent: true, alphaTest: 0.08, roughness: 0.12, clearcoat: 1, clearcoatRoughness: 0.04, polygonOffset: true, polygonOffsetFactor: -4, depthWrite: false }),
-      orange: new THREE.MeshPhysicalMaterial({ color: TEAM_COLORS.orange.main, alphaMap: this.surfaceSplatTexture, transparent: true, alphaTest: 0.08, roughness: 0.12, clearcoat: 1, clearcoatRoughness: 0.04, polygonOffset: true, polygonOffsetFactor: -4, depthWrite: false })
-    };
+    this.decalMaterials = Object.fromEntries(TEAM_ORDER.map(team => [team, new THREE.MeshPhysicalMaterial({ color: TEAM_COLORS[team].main, alphaMap: this.surfaceSplatTexture, transparent: true, alphaTest: 0.08, roughness: 0.12, clearcoat: 1, clearcoatRoughness: 0.04, polygonOffset: true, polygonOffsetFactor: -4, depthWrite: false })])) as Record<Team, THREE.MeshPhysicalMaterial>;
     this.paint = new PaintField(this.scene, this.arena.worldSize);
     this.projectileGeometries = {
       small: new THREE.SphereGeometry(0.14, 7, 5),
@@ -142,14 +140,8 @@ export class NeonGame {
       tailSmall: new THREE.SphereGeometry(0.1, 5, 4),
       tailLarge: new THREE.SphereGeometry(0.18, 6, 4)
     };
-    this.projectileMaterials = {
-      cyan: new THREE.MeshToonMaterial({ color: TEAM_COLORS.cyan.main, emissive: TEAM_COLORS.cyan.dark, emissiveIntensity: 0.4 }),
-      orange: new THREE.MeshToonMaterial({ color: TEAM_COLORS.orange.main, emissive: TEAM_COLORS.orange.dark, emissiveIntensity: 0.4 })
-    };
-    this.tailMaterials = {
-      cyan: new THREE.MeshBasicMaterial({ color: TEAM_COLORS.cyan.main, transparent: true, opacity: 0.34, depthWrite: false }),
-      orange: new THREE.MeshBasicMaterial({ color: TEAM_COLORS.orange.main, transparent: true, opacity: 0.34, depthWrite: false })
-    };
+    this.projectileMaterials = Object.fromEntries(TEAM_ORDER.map(team => [team, new THREE.MeshToonMaterial({ color: TEAM_COLORS[team].main, emissive: TEAM_COLORS[team].dark, emissiveIntensity: 0.4 })])) as Record<Team, THREE.MeshToonMaterial>;
+    this.tailMaterials = Object.fromEntries(TEAM_ORDER.map(team => [team, new THREE.MeshBasicMaterial({ color: TEAM_COLORS[team].main, transparent: true, opacity: 0.34, depthWrite: false })])) as Record<Team, THREE.MeshBasicMaterial>;
     this.difficulty = save.difficulty;
     this.createTeams();
     this.resize();
@@ -225,6 +217,8 @@ export class NeonGame {
       aiPositions: this.fighters.filter(f => !f.isPlayer).map(f => ({ id: f.id, x: f.group.position.x, y: f.group.position.y, z: f.group.position.z, health: f.health, stain: f.inkStain, stainTeam: f.inkStainTeam, grounded: f.grounded, mode: f.aiMode, colliding: f.grounded && this.collides(f.group.position.x, f.group.position.z, f.group.position.y, 0.12) })),
       aiCollisionViolations: this.fighters.filter(f => !f.isPlayer && f.grounded && this.collides(f.group.position.x, f.group.position.z, f.group.position.y, 0.12)).length,
       coverage: this.paint.coverage(),
+      teams: this.arena.teams,
+      rules: this.arena.id === 'custom' ? this.save.customMode.rules : undefined,
       aiModes: this.fighters.filter(f => !f.isPlayer).reduce((modes, fighter) => {
         modes[fighter.aiMode]++;
         return modes;
@@ -351,20 +345,19 @@ export class NeonGame {
   private createTeams() {
     const weapon = WEAPONS.find(w => w.id === this.save.weapon) ?? WEAPONS[0];
     const outfit = OUTFITS.find(o => o.id === this.save.outfit) ?? OUTFITS[0];
-    const cyanSpawns = this.arena.spawns.cyan;
-    const orangeSpawns = this.arena.spawns.orange;
     const teamSize = this.arena.teamSize;
-    this.player = createFighter(0, 'cyan', true, weapon, cyanSpawns[0], outfit, this.save.hairstyle);
-    this.fighters.push(this.player); this.scene.add(this.player.group);
-    for (let i = 1; i < teamSize; i++) {
-      const aiOutfit = OUTFITS[i % OUTFITS.length];
-      const f = createFighter(i, 'cyan', false, WEAPONS[i % WEAPONS.length], cyanSpawns[i], aiOutfit, HAIRSTYLES[i % HAIRSTYLES.length].id);
-      this.fighters.push(f); this.scene.add(f.group);
-    }
-    for (let i = 0; i < teamSize; i++) {
-      const aiOutfit = OUTFITS[(teamSize + i) % OUTFITS.length];
-      const f = createFighter(teamSize + i, 'orange', false, WEAPONS[(i + 1) % WEAPONS.length], orangeSpawns[i], aiOutfit, HAIRSTYLES[(teamSize + i) % HAIRSTYLES.length].id);
-      this.fighters.push(f); this.scene.add(f.group);
+    const teams = this.arena.teams.length ? this.arena.teams : ['cyan', 'orange'] as Team[];
+    let fighterId = 0;
+    for (let teamIndex = 0; teamIndex < teams.length; teamIndex++) {
+      const team = teams[teamIndex];
+      const spawns = this.arena.spawns[team] ?? [];
+      for (let member = 0; member < teamSize; member++) {
+        const spawn = spawns[member] ?? new THREE.Vector3(Math.cos(teamIndex / teams.length * Math.PI * 2) * 24, 0, Math.sin(teamIndex / teams.length * Math.PI * 2) * 24);
+        const isPlayer = teamIndex === 0 && member === 0;
+        const fighter = createFighter(fighterId++, team, isPlayer, isPlayer ? weapon : WEAPONS[(fighterId + 1) % WEAPONS.length], spawn, isPlayer ? outfit : OUTFITS[fighterId % OUTFITS.length], isPlayer ? this.save.hairstyle : HAIRSTYLES[fighterId % HAIRSTYLES.length].id);
+        this.fighters.push(fighter); this.scene.add(fighter.group);
+        if (isPlayer) this.player = fighter;
+      }
     }
   }
 
@@ -412,7 +405,7 @@ export class NeonGame {
     const forward = new THREE.Vector3(-Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw));
     const right = new THREE.Vector3(Math.cos(this.cameraYaw), 0, -Math.sin(this.cameraYaw));
     const desired = forward.multiplyScalar(this.input.state.moveY).add(right.multiplyScalar(this.input.state.moveX));
-    const wantsSubmerge = this.input.state.submerge;
+    const wantsSubmerge = this.input.state.submerge && this.customRule('allowSubmerge');
     const groundOwn = this.paint.teamAt(this.player.group.position.x, this.player.group.position.z) === this.player.team;
     const surfaceInk = this.findSurfaceInk(this.player, this.player.team);
     const surfaceOwn = Boolean(surfaceInk);
@@ -434,7 +427,7 @@ export class NeonGame {
         desired.normalize().multiplyScalar(speed);
         this.player.velocity.lerp(desired, 1 - Math.pow(0.001, dt));
       } else this.player.velocity.lerp(new THREE.Vector3(0, this.player.velocity.y, 0), 1 - Math.pow(0.02, dt));
-      if (this.input.consumeJump() && this.player.grounded) {
+      if (this.input.consumeJump() && this.player.grounded && this.customRule('allowJump')) {
         this.player.verticalVelocity = 8.6;
         this.player.grounded = false;
         this.player.previousGrounded = false;
@@ -443,7 +436,7 @@ export class NeonGame {
       }
       this.moveFighter(this.player, dt);
     }
-    if (this.input.consumeWaterBomb()) this.throwWaterBomb(this.player, this.aimDirection());
+    if (this.input.consumeWaterBomb() && this.customRule('allowSpecialWeapons')) this.throwWaterBomb(this.player, this.aimDirection());
     const firePressed = this.input.consumeFirePress();
     if (!canSubmerge && this.input.state.firing && (this.player.weapon.automatic || firePressed)) {
       this.tryFire(this.player, this.aimDirection());
@@ -457,7 +450,7 @@ export class NeonGame {
     f.aiJumpCooldown = Math.max(0, f.aiJumpCooldown - dt);
     let enemy = this.closestEnemyInRadius(f, f.weapon.id === 'charger' ? 30 : 15);
     let enemyDistanceSq = enemy ? enemy.group.position.distanceToSquared(f.group.position) : Infinity;
-    const onOwnPaint = this.paint.teamAt(f.group.position.x, f.group.position.z) === f.team;
+    const onOwnPaint = this.paint.teamAt(f.group.position.x, f.group.position.z) === f.team || Boolean(this.findSurfaceInk(f, f.team));
     const enemyClose = enemyDistanceSq < 6.5 * 6.5;
     // AI submerges to refill at low ammo and uses allied ink lanes for fast rotations when combat is not immediate.
     const wantsRefill = f.ammo < 46;
@@ -569,7 +562,7 @@ export class NeonGame {
     f.fireCooldown -= dt;
     f.rollerHitCooldown = Math.max(0, f.rollerHitCooldown - dt);
     if (!f.alive) {
-      if (time >= f.respawnAt) this.respawn(f);
+      if (time >= f.respawnAt && this.customRule('allowRespawn')) this.respawn(f);
       return;
     }
     const paintHere = this.paint.teamAt(f.group.position.x, f.group.position.z);
@@ -586,7 +579,7 @@ export class NeonGame {
     if (f.swim && ownPaint && outOfCombat) f.health = Math.min(100, f.health + dt * 20);
     else if (ownPaint) f.health = Math.min(100, f.health + dt * 4);
     else if (paintHere && !(f.isPlayer && this.save.infiniteHealth)) {
-      f.health = Math.max(10, f.health - dt * 11);
+      if (this.customRule('allowDamage')) f.health = Math.max(10, f.health - dt * 11);
       f.lastDamagedAt = this.elapsed;
       f.inkStain = Math.max(f.inkStain, 0.35);
       f.inkStainTeam = paintHere;
@@ -596,7 +589,7 @@ export class NeonGame {
   }
 
   private triggerAIJump(f: Fighter, strength: number) {
-    if (!f.grounded || f.aiJumpCooldown > 0) return false;
+    if (!this.customRule('allowJump') || !f.grounded || f.aiJumpCooldown > 0) return false;
     f.verticalVelocity = strength;
     f.grounded = false;
     f.previousGrounded = false;
@@ -672,7 +665,7 @@ export class NeonGame {
       if (distance > damageRadius) continue;
       const falloff = 1 - distance / damageRadius;
       const damage = Math.round(26 + falloff * 34);
-      if (!(target.isPlayer && this.save.infiniteHealth)) target.health -= damage;
+      if (this.customRule('allowDamage') && !(target.isPlayer && this.save.infiniteHealth)) target.health -= damage;
       target.lastDamagedAt = this.elapsed;
       target.inkStain = Math.max(target.inkStain, 0.7 + falloff * 0.3);
       target.inkStainTeam = owner.team;
@@ -915,7 +908,7 @@ export class NeonGame {
       if (distance > radius) continue;
       const falloff = 1 - distance / radius;
       const damage = Math.round(24 + falloff * 46);
-      if (!(fighter.isPlayer && this.save.infiniteHealth)) fighter.health -= damage;
+      if (this.customRule('allowDamage') && !(fighter.isPlayer && this.save.infiniteHealth)) fighter.health -= damage;
       fighter.lastDamagedAt = this.elapsed;
       fighter.inkStain = Math.max(fighter.inkStain, 0.72 + falloff * 0.28);
       fighter.inkStainTeam = bomb.owner.team;
@@ -977,7 +970,7 @@ export class NeonGame {
         const dz = f.group.position.z - pos.z;
         if (dx * dx + dy * dy + dz * dz < 0.7396) {
           const damage = p.weapon.damage;
-          if (!(f.isPlayer && this.save.infiniteHealth)) f.health -= damage;
+          if (this.customRule('allowDamage') && !(f.isPlayer && this.save.infiniteHealth)) f.health -= damage;
           f.lastDamagedAt = this.elapsed;
           f.inkStain = 1;
           f.inkStainTeam = p.owner.team;
@@ -1224,6 +1217,7 @@ export class NeonGame {
   }
 
   private eliminate(victim: Fighter, attacker: Fighter) {
+    if (!this.customRule('allowDamage')) return;
     victim.alive = false; victim.group.visible = false; victim.health = 0; victim.respawnAt = performance.now() / 1000 + 3;
     attacker.score += 100;
     if (attacker.isPlayer) this.kills++;
@@ -1340,6 +1334,7 @@ export class NeonGame {
     const coverage = this.paint.coverage();
     this.callbacks.onStats({
       time: Math.max(0, this.matchTime), cyan: coverage.cyanPercent, orange: coverage.orangePercent,
+      teams: Object.fromEntries(this.arena.teams.map(team => [team, coverage.teams[team]?.percent ?? 0])),
       health: this.player.health, ammo: this.player.ammo, score: this.spectatorMode ? 0 : this.player.score, weapon: this.player.weapon,
       alive: this.spectatorMode ? true : this.player.alive, respawn: this.spectatorMode || this.player.alive ? 0 : Math.max(0, this.player.respawnAt - performance.now() / 1000)
     });
@@ -1349,9 +1344,9 @@ export class NeonGame {
     this.running = false;
     const c = this.paint.coverage();
     const stats: GameStats & { won: boolean; kills: number } = {
-      time: 0, cyan: c.cyanPercent, orange: c.orangePercent, health: this.player.health, ammo: this.player.ammo,
+      time: 0, cyan: c.cyanPercent, orange: c.orangePercent, teams: Object.fromEntries(this.arena.teams.map(team => [team, c.teams[team]?.percent ?? 0])), health: this.player.health, ammo: this.player.ammo,
       score: this.player.score, weapon: this.player.weapon, alive: this.player.alive, respawn: 0,
-      won: c.cyanPercent >= c.orangePercent, kills: this.kills
+      won: this.save.customMode.rules.turfWin ? (this.arena.teams[0] ? (c.teams[this.arena.teams[0]]?.percent ?? 0) >= Math.max(...this.arena.teams.slice(1).map(team => c.teams[team]?.percent ?? 0)) : true) : this.player.health > 0, kills: this.kills
     };
     this.callbacks.onEnd(stats);
   }
@@ -1368,11 +1363,16 @@ export class NeonGame {
     } catch { /* audio is optional */ }
   }
 
+  private customRule(key: 'allowJump' | 'allowSubmerge' | 'allowSpecialWeapons' | 'allowRespawn' | 'allowDamage' | 'turfWin') {
+    return this.arena.id !== 'custom' || this.save.customMode.rules[key];
+  }
+
   private getMatchDuration() {
     const requested = Number(new URLSearchParams(location.search).get('testMatchSeconds'));
+    const base = this.arena?.id === 'custom' ? this.save.customMode.rules.matchSeconds : 150;
     return location.hostname === 'localhost' && Number.isFinite(requested) && requested > 0
-      ? THREE.MathUtils.clamp(requested, 2, 150)
-      : 150;
+      ? THREE.MathUtils.clamp(requested, 2, 300)
+      : base;
   }
 
   private resize = () => {

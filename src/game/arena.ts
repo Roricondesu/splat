@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ArenaId, Team } from './config';
+import { ArenaId, CustomModeConfig, Team, TEAM_ORDER } from './config';
 
 const INK = 0x17303e;
 const WHITE = 0xf4f8fa;
@@ -18,7 +18,8 @@ export interface ArenaBuild {
   obstacles: THREE.Object3D[];
   paintables: THREE.Mesh[];
   walkables: THREE.Object3D[];
-  spawns: Record<Team, THREE.Vector3[]>;
+  spawns: Partial<Record<Team, THREE.Vector3[]>>;
+  teams: Team[];
   worldSize: number;
   teamSize: number;
 }
@@ -303,8 +304,9 @@ function buildBlankExpanse(ctx: BuildContext) {
   };
 }
 
-function addWorldLighting(scene: THREE.Scene, root: THREE.Group, id: ArenaId) {
+function addWorldLighting(scene: THREE.Scene, root: THREE.Group, id: ArenaId, customMode?: CustomModeConfig) {
   const isBlank = id === 'blank-expanse';
+  const customSize = id === 'custom' ? (customMode?.worldSize ?? 72) : 72;
   scene.background = new THREE.Color(isBlank ? 0xb9e4ef : 0xd4edf2);
   scene.fog = new THREE.FogExp2(isBlank ? 0xc5e9f0 : 0xdff3f4, isBlank ? 0.006 : 0.007);
   const hemi = new THREE.HemisphereLight(0xe2f5ff, 0xe6d7bd, 2.1);
@@ -313,7 +315,7 @@ function addWorldLighting(scene: THREE.Scene, root: THREE.Group, id: ArenaId) {
   sun.position.set(-18, 35, 15);
   sun.castShadow = true;
   sun.shadow.mapSize.set(1024, 1024);
-  const shadowExtent = 42;
+  const shadowExtent = customSize * 0.62;
   sun.shadow.camera.left = -shadowExtent;
   sun.shadow.camera.right = shadowExtent;
   sun.shadow.camera.top = shadowExtent;
@@ -324,25 +326,54 @@ function addWorldLighting(scene: THREE.Scene, root: THREE.Group, id: ArenaId) {
   fill.position.set(18, 20, -20);
   root.add(fill);
 
-  const underlaySize = isBlank ? 92 : 72;
+  const underlaySize = id === 'custom' ? customSize + 20 : isBlank ? 92 : 72;
   const underlay = meshBox(underlaySize, 0.18, underlaySize, id === 'skyline-market' ? CONCRETE : isBlank ? 0xd7dfe3 : 0x899ba4);
   underlay.position.y = -0.14;
   underlay.receiveShadow = true;
   scene.add(underlay);
 }
 
-export function createArena(scene: THREE.Scene, id: ArenaId): ArenaBuild {
+function buildCustomArena(ctx: BuildContext, config: CustomModeConfig) {
+  const half = config.worldSize * 0.5;
+  addPerimeter(ctx, config.worldSize);
+  const grid = Math.max(4, config.gridSize);
+  const cell = config.worldSize / grid;
+  for (const block of config.blocks) {
+    const height = block.kind === 'tower' ? 6 : block.kind === 'high' ? 3.2 : 1.5;
+    const width = cell * 0.84;
+    placeBox(ctx, [width, height, width], [block.x, height * 0.5, block.z], WHITE, { solid: true, walkable: true, gloss: true });
+  }
+  const spawns: Partial<Record<Team, THREE.Vector3[]>> = {};
+  const ringRadius = Math.max(half * 0.72, 8);
+  for (let i = 0; i < config.teamCount; i++) {
+    const team = TEAM_ORDER[i];
+    const center = new THREE.Vector3(Math.cos(i / config.teamCount * Math.PI * 2) * ringRadius, 0, Math.sin(i / config.teamCount * Math.PI * 2) * ringRadius);
+    const points: THREE.Vector3[] = [];
+    for (let j = 0; j < config.teamSize; j++) {
+      const spread = (j - (config.teamSize - 1) * 0.5) * Math.min(1.4, config.worldSize / 70);
+      points.push(new THREE.Vector3(THREE.MathUtils.clamp(center.x + Math.cos(i / config.teamCount * Math.PI * 2 + Math.PI / 2) * spread, -half + 2, half - 2), 0, THREE.MathUtils.clamp(center.z + Math.sin(i / config.teamCount * Math.PI * 2 + Math.PI / 2) * spread, -half + 2, half - 2)));
+    }
+    spawns[team] = points;
+  }
+  return spawns;
+}
+
+export function createArena(scene: THREE.Scene, id: ArenaId, customMode?: CustomModeConfig): ArenaBuild {
   const root = new THREE.Group();
   root.name = `arena-${id}`;
   scene.add(root);
-  addWorldLighting(scene, root, id);
+  addWorldLighting(scene, root, id, customMode);
   const ctx: BuildContext = { root, obstacles: [], walkables: [] };
   const isBlank = id === 'blank-expanse';
-  const spawns = isBlank
-    ? buildBlankExpanse(ctx)
-    : id === 'canal-foundry'
-      ? buildCanalFoundry(ctx)
-      : buildSkylineMarket(ctx);
+  const isCustom = id === 'custom' && Boolean(customMode);
+  if (isCustom) scene.fog = new THREE.FogExp2(0xdff3f4, Math.max(0.003, 0.5 / customMode!.worldSize));
+  const spawns = isCustom
+    ? buildCustomArena(ctx, customMode!)
+    : isBlank
+      ? buildBlankExpanse(ctx)
+      : id === 'canal-foundry'
+        ? buildCanalFoundry(ctx)
+        : buildSkylineMarket(ctx);
   root.updateMatrixWorld(true);
   const paintables: THREE.Mesh[] = [];
   root.traverse(object => {
@@ -350,6 +381,8 @@ export function createArena(scene: THREE.Scene, id: ArenaId): ArenaBuild {
       paintables.push(object);
     }
   });
+  const teamSize = isCustom ? customMode!.teamSize : isBlank ? 10 : 4;
+  const teams = isCustom ? TEAM_ORDER.slice(0, customMode!.teamCount) : ['cyan', 'orange'] as Team[];
   return {
     id,
     root,
@@ -357,7 +390,8 @@ export function createArena(scene: THREE.Scene, id: ArenaId): ArenaBuild {
     paintables,
     walkables: ctx.walkables,
     spawns,
-    worldSize: 72,
-    teamSize: isBlank ? 10 : 4
+    teams,
+    worldSize: isCustom ? customMode!.worldSize : 72,
+    teamSize
   };
 }

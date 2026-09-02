@@ -1,13 +1,48 @@
-export type Team = 'cyan' | 'orange';
+export type Team = 'cyan' | 'orange' | 'lime' | 'purple' | 'pink' | 'yellow';
+export const TEAM_ORDER: Team[] = ['cyan', 'orange', 'lime', 'purple', 'pink', 'yellow'];
 export type WeaponId = 'pulse' | 'roller' | 'bucket' | 'burst' | 'charger' | 'scatter' | 'brush' | 'umbrella';
 export type Difficulty = 'casual' | 'standard' | 'expert';
-export type ArenaId = 'skyline-market' | 'canal-foundry' | 'blank-expanse';
+export type ArenaId = 'skyline-market' | 'canal-foundry' | 'blank-expanse' | 'custom';
+
+export type CustomBlockKind = 'low' | 'high' | 'tower';
+export interface CustomBlock {
+  x: number;
+  z: number;
+  kind: CustomBlockKind;
+}
+export interface CustomRules {
+  matchSeconds: number;
+  allowJump: boolean;
+  allowSubmerge: boolean;
+  allowSpecialWeapons: boolean;
+  allowRespawn: boolean;
+  allowDamage: boolean;
+  turfWin: boolean;
+}
+export interface CustomModeConfig {
+  worldSize: number;
+  teamSize: number;
+  teamCount: 2 | 3 | 4 | 5 | 6;
+  gridSize: number;
+  blocks: CustomBlock[];
+  rules: CustomRules;
+}
 
 export const ARENAS: Array<{ id: ArenaId; name: string; subtitle: string; teamSize: number }> = [
   { id: 'skyline-market', name: '云顶集市', subtitle: '屋顶露台与空中连廊', teamSize: 4 },
   { id: 'canal-foundry', name: '潮汐铸造厂', subtitle: '运河、厂房与双层管线', teamSize: 4 },
-  { id: 'blank-expanse', name: '空白广域场', subtitle: '无障碍超大平地 · 10V10', teamSize: 10 }
+  { id: 'blank-expanse', name: '空白广域场', subtitle: '无障碍超大平地 · 10V10', teamSize: 10 },
+  { id: 'custom', name: '自定义战场', subtitle: '自由尺寸、方块与多队规则', teamSize: 2 }
 ];
+
+export const TEAM_COLORS = {
+  cyan: { main: 0x10d9d0, light: 0x8cfff5, dark: 0x007e85, css: '#16e0d0', name: '青蓝' },
+  orange: { main: 0xff6828, light: 0xffbd70, dark: 0xb82d09, css: '#ff6b2c', name: '橙光' },
+  lime: { main: 0xb8ee48, light: 0xe5ff9b, dark: 0x638c12, css: '#b8ee48', name: '酸柠' },
+  purple: { main: 0x8c7dff, light: 0xc3baff, dark: 0x5143ae, css: '#8c7dff', name: '紫电' },
+  pink: { main: 0xf06ba9, light: 0xffb8d8, dark: 0xa62c63, css: '#f06ba9', name: '莓红' },
+  yellow: { main: 0xffd23f, light: 0xffed9a, dark: 0xb68500, css: '#ffd23f', name: '金黄' }
+};
 
 export interface WeaponSpec {
   id: WeaponId;
@@ -45,11 +80,6 @@ export const WEAPONS: WeaponSpec[] = [
   { id: 'brush', name: '疾风涂刷', subtitle: '高速贴地', icon: '≡', fireRate: 0.075, damage: 9, range: 6.4, spread: 0.26, paintRadius: 1.05, projectileSpeed: 25, ammoCost: 2.1, automatic: true, color: '#ff8fd0', speedScale: 1.24, trailPaint: 2.2 },
   { id: 'umbrella', name: '喷射护伞', subtitle: '扇形压制', icon: '☂', fireRate: 0.62, damage: 26, range: 14, spread: 0.17, paintRadius: 2.0, projectileSpeed: 18, ammoCost: 10, automatic: false, color: '#9d7bff', arcing: true, pellets: 4, speedScale: 0.96 }
 ];
-
-export const TEAM_COLORS = {
-  cyan: { main: 0x10d9d0, light: 0x8cfff5, dark: 0x007e85, css: '#16e0d0' },
-  orange: { main: 0xff6828, light: 0xffbd70, dark: 0xb82d09, css: '#ff6b2c' }
-};
 
 export interface OutfitSpec {
   id: string;
@@ -110,10 +140,28 @@ export interface SaveData {
   joystickMode: 'fixed' | 'floating';
   infiniteInk: boolean;
   infiniteHealth: boolean;
+  customMode: CustomModeConfig;
   matches: number;
   wins: number;
   coins: number;
 }
+
+export const DEFAULT_CUSTOM_MODE: CustomModeConfig = {
+  worldSize: 72,
+  teamSize: 4,
+  teamCount: 2,
+  gridSize: 12,
+  blocks: [],
+  rules: {
+    matchSeconds: 150,
+    allowJump: true,
+    allowSubmerge: true,
+    allowSpecialWeapons: true,
+    allowRespawn: true,
+    allowDamage: true,
+    turfWin: true
+  }
+};
 
 export const DEFAULT_SAVE: SaveData = {
   weapon: 'pulse',
@@ -128,6 +176,7 @@ export const DEFAULT_SAVE: SaveData = {
   joystickMode: 'fixed',
   infiniteInk: false,
   infiniteHealth: false,
+  customMode: DEFAULT_CUSTOM_MODE,
   matches: 0,
   wins: 0,
   coins: 1250

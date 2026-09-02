@@ -1,4 +1,4 @@
-import { ARENAS, ArenaId, DEFAULT_SAVE, Difficulty, HAIRSTYLES, OutfitSpec, OUTFITS, SaveData, WEAPONS, WeaponId } from '../game/config';
+import { ARENAS, ArenaId, CustomRules, DEFAULT_SAVE, Difficulty, HAIRSTYLES, OutfitSpec, OUTFITS, SaveData, TEAM_COLORS, TEAM_ORDER, WEAPONS, WeaponId } from '../game/config';
 import { GameStats } from '../game/game';
 
 export type Screen = 'loading' | 'home' | 'loadout' | 'settings' | 'game' | 'result';
@@ -28,8 +28,10 @@ export class GameUI {
   }
 
   private loadSave(): SaveData {
-    try { return { ...DEFAULT_SAVE, ...JSON.parse(localStorage.getItem('neon-turf-save') || '{}') }; }
-    catch { return { ...DEFAULT_SAVE }; }
+    try {
+      const parsed = JSON.parse(localStorage.getItem('neon-turf-save') || '{}');
+      return { ...DEFAULT_SAVE, ...parsed, customMode: { ...DEFAULT_SAVE.customMode, ...(parsed.customMode || {}), rules: { ...DEFAULT_SAVE.customMode.rules, ...(parsed.customMode?.rules || {}) }, blocks: Array.isArray(parsed.customMode?.blocks) ? parsed.customMode.blocks : [] } };
+    } catch { return { ...DEFAULT_SAVE, customMode: { ...DEFAULT_SAVE.customMode, blocks: [...DEFAULT_SAVE.customMode.blocks], rules: { ...DEFAULT_SAVE.customMode.rules } } }; }
   }
 
   persist() {
@@ -60,7 +62,7 @@ export class GameUI {
             <p class="tagline">用色彩占领街区。<br/>每一枪，都改写战场。</p>
             <div class="home-actions">
               <div class="arena-picker" aria-label="地图选择">
-                ${ARENAS.map(item => `<button class="arena-option ${item.id === this.save.arena ? 'selected' : ''}" data-arena="${item.id}"><b>${item.name}</b><small>${item.subtitle}</small></button>`).join('')}
+                ${ARENAS.map(item => `<button class="arena-option ${item.id === this.save.arena ? 'selected' : ''}" data-arena="${item.id}"><b>${item.name}</b><small>${item.id === 'custom' ? `${item.subtitle} · ${this.save.customMode.teamCount}队` : item.subtitle}</small></button>`).join('')}
               </div>
               <button class="primary-btn huge" data-action="start"><span>开始对战</span><small>AI TURF BATTLE</small><b>→</b></button>
               <button class="secondary-btn" data-action="spectate"><span>上帝视角观战</span><small>AI VS AI</small></button>
@@ -89,8 +91,68 @@ export class GameUI {
     this.root.querySelectorAll<HTMLElement>('[data-arena]').forEach(el => el.onclick = () => {
       this.save.arena = el.dataset.arena as ArenaId;
       this.persist();
-      this.showHome();
+      if (this.save.arena === 'custom') this.showCustomMode();
+      else this.showHome();
     });
+    this.bindCommon();
+  }
+
+  showCustomMode() {
+    this.screen = 'settings';
+    const mode = this.save.customMode;
+    const sizeOptions = [48, 60, 72, 84, 96];
+    this.root.innerHTML = `<div class="screen panel-screen custom-mode-screen">
+      <div class="panel-bg"></div>
+      <header class="panel-header"><button class="back-btn" data-action="back">←</button><div><small>BATTLE BUILDER</small><h2>自定义战场</h2></div><button class="secondary-btn custom-clear" data-custom-clear>清空方块</button></header>
+      <main class="custom-layout">
+        <section class="custom-editor glass">
+          <div class="section-heading"><div><small>PLACE WHITE BLOCKS</small><h3>方块布局</h3></div><span>点击格子摆放 / 删除</span></div>
+          <div class="custom-grid" data-custom-grid style="--grid-size:${mode.gridSize}"></div>
+          <div class="custom-block-tools"><button class="block-tool selected" data-block-kind="low">低台</button><button class="block-tool" data-block-kind="high">高台</button><button class="block-tool" data-block-kind="tower">塔块</button></div>
+        </section>
+        <aside class="custom-options glass">
+          <div class="section-heading"><div><small>RULE SET</small><h3>战场规则</h3></div></div>
+          <label><span>地图尺寸<em>可选大范围编辑空间</em></span><select data-custom="worldSize">${sizeOptions.map(size => `<option value="${size}" ${size === mode.worldSize ? 'selected' : ''}>${size} × ${size}</option>`).join('')}</select></label>
+          <label><span>每队人数<em>2v2 至 20v20</em></span><select data-custom="teamSize">${Array.from({ length: 19 }, (_, i) => i + 2).map(size => `<option value="${size}" ${size === mode.teamSize ? 'selected' : ''}>${size} 人</option>`).join('')}</select></label>
+          <label><span>队伍数量<em>不同颜色同时对决</em></span><select data-custom="teamCount">${[2,3,4,5,6].map(count => `<option value="${count}" ${count === mode.teamCount ? 'selected' : ''}>${count} 队</option>`).join('')}</select></label>
+          <label><span>比赛时长<em>自定义倒计时</em></span><select data-custom-rule="matchSeconds">${[60,90,120,150,180,300].map(sec => `<option value="${sec}" ${sec === mode.rules.matchSeconds ? 'selected' : ''}>${sec} 秒</option>`).join('')}</select></label>
+          <div class="custom-toggles">
+            ${([['allowJump','允许跳跃'],['allowSubmerge','允许潜墨'],['allowSpecialWeapons','特殊武器'],['allowRespawn','允许复活'],['allowDamage','允许伤害'],['turfWin','占地胜负']] as Array<[keyof CustomRules, string]>).map(([key, label]) => `<label class="toggle-line"><span>${label}</span><input type="checkbox" data-custom-rule="${key}" ${mode.rules[key] ? 'checked' : ''}/></label>`).join('')}
+          </div>
+          <button class="primary-btn custom-start" data-custom-start><span>进入自定义对战</span><small>${mode.teamCount} 队 · ${mode.teamSize} 人 / 队</small><b>→</b></button>
+        </aside>
+      </main>
+    </div>`;
+    const grid = this.root.querySelector<HTMLElement>('[data-custom-grid]')!;
+    const renderGrid = () => {
+      const cols = 12;
+      grid.innerHTML = '';
+      for (let z = -6; z < 6; z++) for (let x = -6; x < 6; x++) {
+        const worldX = Math.round(x * mode.worldSize / cols);
+        const worldZ = Math.round(z * mode.worldSize / cols);
+        const block = mode.blocks.find(item => item.x === worldX && item.z === worldZ);
+        const cell = document.createElement('button');
+        cell.className = `grid-cell ${block ? `filled ${block.kind}` : ''}`;
+        cell.dataset.x = String(worldX); cell.dataset.z = String(worldZ);
+        cell.title = `${worldX}, ${worldZ}`;
+        cell.onclick = () => {
+          const index = mode.blocks.findIndex(item => item.x === worldX && item.z === worldZ);
+          if (index >= 0) mode.blocks.splice(index, 1);
+          else mode.blocks.push({ x: worldX, z: worldZ, kind: (grid.dataset.kind as 'low' | 'high' | 'tower') ?? 'low' });
+          this.persist(); renderGrid();
+        };
+        grid.appendChild(cell);
+      }
+    };
+    grid.dataset.kind = 'low'; renderGrid();
+    this.root.querySelectorAll<HTMLElement>('[data-block-kind]').forEach(button => button.onclick = () => {
+      this.root.querySelectorAll('[data-block-kind]').forEach(item => item.classList.remove('selected'));
+      button.classList.add('selected'); grid.dataset.kind = button.dataset.blockKind!;
+    });
+    this.root.querySelector<HTMLElement>('[data-custom-clear]')!.onclick = () => { mode.blocks.length = 0; this.persist(); renderGrid(); };
+    this.root.querySelectorAll<HTMLSelectElement>('[data-custom]').forEach(control => control.onchange = () => { (mode as any)[control.dataset.custom!] = Number(control.value); this.persist(); });
+    this.root.querySelectorAll<HTMLSelectElement | HTMLInputElement>('[data-custom-rule]').forEach(control => control.onchange = () => { const key = control.dataset.customRule!; (mode.rules as any)[key] = control instanceof HTMLInputElement ? control.checked : Number(control.value); this.persist(); });
+    this.root.querySelector<HTMLElement>('[data-custom-start]')!.onclick = () => { this.save.arena = 'custom'; this.persist(); this.actions.startGame(); };
     this.bindCommon();
   }
 
@@ -190,16 +252,18 @@ export class GameUI {
     this.screen = 'game';
     this.spectating = spectating;
     const weapon = WEAPONS.find(w => w.id === this.save.weapon)!;
+    const activeTeams = this.currentTeams();
+    const teamHud = activeTeams.map(team => `<div class="team-score team-${team}" aria-label="${TEAM_COLORS[team].name}队">${this.teamMark(TEAM_COLORS[team].css)}</div>`).join('');
+    const teamMeters = activeTeams.map(team => `<i data-team-meter="${team}" style="background:${TEAM_COLORS[team].css};width:${100 / activeTeams.length}%"></i>`).join('');
     this.root.innerHTML = `
       <div class="screen game-screen">
         <canvas id="game-canvas"></canvas>
         <div class="game-vignette"></div>
         <header class="hud-top" aria-label="对战状态">
-          <div class="team-score cyan" aria-label="青蓝队">${this.teamMark('#16e0d0')}</div>
+          ${teamHud}
           <div class="timer" aria-label="剩余时间">${this.timerGlyph()}${this.svgDigits('2:30', { fill: '#ffffff', className: 'hud-digits time-digits', dataAttr: 'data-time' })}</div>
-          <div class="team-score orange" aria-label="橙光队">${this.teamMark('#ff6b2c')}</div>
         </header>
-        <div class="turf-meter"><i class="cyan-fill" data-meter-cyan></i><i class="orange-fill"></i></div>
+        <div class="turf-meter multi-team-meter">${teamMeters}</div>
         <div class="crosshair"><i></i><i></i><i></i><i></i><b data-hitmarker></b></div>
         <div class="damage-vignette" data-damage-vignette></div>
         <div class="hud-bottom-left">
@@ -238,7 +302,8 @@ export class GameUI {
     this.stats = stats;
     const q = <T extends Element = HTMLElement>(s: string) => this.root.querySelector<T>(s);
     this.updateDigits(q<SVGSVGElement>('[data-time]'), `${Math.floor(stats.time / 60)}:${Math.floor(stats.time % 60).toString().padStart(2, '0')}`);
-    q<HTMLElement>('[data-meter-cyan]')!.style.width = `${stats.cyan}%`;
+    q<HTMLElement>('[data-meter-cyan]')?.style.setProperty('width', `${stats.cyan}%`);
+    Object.entries(stats.teams ?? {}).forEach(([team, percent]) => q<HTMLElement>(`[data-team-meter="${team}"]`)?.style.setProperty('width', `${percent}%`));
     this.updateDigits(q<SVGSVGElement>('[data-ammo-text]'), `${Math.round(stats.ammo)}`);
     const ammoRatio = Math.max(0, Math.min(100, stats.ammo)) / 100;
     q<SVGCircleElement>('[data-ammo-ring]')!.style.strokeDashoffset = `${264 - 264 * ammoRatio}`;
@@ -272,14 +337,12 @@ export class GameUI {
   showResult(stats: GameStats & { won: boolean; kills: number }) {
     this.screen = 'result';
     this.save.matches++; if (stats.won) this.save.wins++; const reward = 180 + Math.round(stats.score * 0.2); this.save.coins += reward; this.persist();
+    const resultTeams = this.currentTeams();
+    const resultRows = resultTeams.map(team => `<div class="result-team team-${team}" style="--team-color:${TEAM_COLORS[team].css}"><span>${TEAM_COLORS[team].name}队</span><b>${(stats.teams?.[team] ?? (team === 'cyan' ? stats.cyan : stats.orange)).toFixed(1)}<small>%</small></b><i style="width:${stats.teams?.[team] ?? (team === 'cyan' ? stats.cyan : stats.orange)}%"></i></div>`).join('');
     this.root.innerHTML = `<div class="screen result-screen ${stats.won ? 'won' : 'lost'}">
       <div class="result-rays"></div><div class="result-stamp">${stats.won ? 'TURF SECURED' : 'NEXT ROUND'}</div>
       <header><small>MATCH COMPLETE</small><h1>${stats.won ? '漂亮拿下！' : '差一点点！'}</h1><p>${stats.won ? '整条街区都留下了你的颜色。' : '换把武器，再把地盘抢回来。'}</p></header>
-      <div class="result-board glass">
-        <div class="result-team cyan"><span>青蓝队</span><b>${stats.cyan.toFixed(1)}<small>%</small></b><i style="width:${stats.cyan}%"></i></div>
-        <div class="versus">VS</div>
-        <div class="result-team orange"><span>橙光队</span><b>${stats.orange.toFixed(1)}<small>%</small></b><i style="width:${stats.orange}%"></i></div>
-      </div>
+      <div class="result-board glass ${resultTeams.length > 2 ? 'multi-result' : ''}">${resultRows}</div>
       <div class="performance-grid">
         <div><small>占地贡献</small><b>${Math.round(stats.score)}</b><em>PAINT PTS</em></div>
         <div><small>击退数</small><b>${stats.kills}</b><em>SPLATS</em></div>
@@ -431,6 +494,11 @@ export class GameUI {
     this.root.querySelector<HTMLElement>('[data-action="back"]')?.addEventListener('click', this.showHome.bind(this));
     this.root.querySelector<HTMLElement>('[data-action="loadout"]')?.addEventListener('click', this.showLoadout.bind(this));
     this.root.querySelector<HTMLElement>('[data-action="settings"]')?.addEventListener('click', () => this.showSettings());
+  }
+
+  private currentTeams() {
+    if (this.save.arena === 'custom') return TEAM_ORDER.slice(0, this.save.customMode.teamCount);
+    return ['cyan', 'orange'] as const;
   }
 
   private characterPreview(primary: string, accent: string, hairstyle: SaveData['hairstyle'], large = false) {

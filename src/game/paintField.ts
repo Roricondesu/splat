@@ -1,20 +1,11 @@
 import * as THREE from 'three';
-import { Team, WeaponId } from './config';
+import { Team, TEAM_ORDER, TEAM_COLORS, WeaponId } from './config';
 
 export const GRID_SIZE = 128;
 export const DEFAULT_WORLD_SIZE = 44;
 const CANVAS_SIZE = 1024;
 
 export type PaintSplatStyle = WeaponId | 'spawn' | 'elimination';
-
-interface PaintPalette {
-  base: string;
-}
-
-const PALETTES: Record<Team, PaintPalette> = {
-  cyan: { base: '#08d3c8' },
-  orange: { base: '#ff641f' }
-};
 
 export class PaintField {
   readonly canvas: HTMLCanvasElement;
@@ -24,8 +15,7 @@ export class PaintField {
   readonly floor: THREE.Mesh;
   private readonly inkFloor: THREE.Mesh;
   private stampSerial = 0;
-  private cyanCells = 0;
-  private orangeCells = 0;
+  private readonly teamCells = new Map<Team, number>();
   private textureDirty = false;
   private lastTextureUploadAt = -Infinity;
 
@@ -76,8 +66,8 @@ export class PaintField {
 
   reset() {
     this.data.fill(0);
-    this.cyanCells = 0;
-    this.orangeCells = 0;
+    this.teamCells.clear();
+    TEAM_ORDER.forEach(team => this.teamCells.set(team, 0));
     this.ctx.clearRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
     this.texture.needsUpdate = true;
     this.textureDirty = false;
@@ -154,7 +144,7 @@ export class PaintField {
       : style === 'elimination' ? 1.2
       : 1.08;
     const bound = Math.ceil(pixelRadius * extent);
-    const value = team === 'cyan' ? 1 : 2;
+    const value = TEAM_ORDER.indexOf(team) + 1;
     let changedCells = 0;
 
     for (let py = -bound; py <= bound; py++) {
@@ -169,11 +159,13 @@ export class PaintField {
         const index = gy * GRID_SIZE + gx;
         const previous = this.data[index];
         if (previous === value) continue;
-        if (previous === 1) this.cyanCells--;
-        else if (previous === 2) this.orangeCells--;
+        if (previous > 0) {
+          const previousTeam = TEAM_ORDER[previous - 1];
+          this.teamCells.set(previousTeam, Math.max(0, (this.teamCells.get(previousTeam) ?? 0) - 1));
+        }
         this.data[index] = value;
-        if (value === 1) this.cyanCells++;
-        else this.orangeCells++;
+        const currentTeam = TEAM_ORDER[value - 1];
+        this.teamCells.set(currentTeam, (this.teamCells.get(currentTeam) ?? 0) + 1);
         changedCells++;
       }
     }
@@ -226,7 +218,7 @@ export class PaintField {
     const cx = (x / this.worldSize + 0.5) * CANVAS_SIZE;
     const cy = (z / this.worldSize + 0.5) * CANVAS_SIZE;
     const r = radius * scale;
-    const color = PALETTES[team].base;
+    const color = TEAM_COLORS[team].css;
 
     this.ctx.save();
     this.ctx.translate(cx, cy);
@@ -294,11 +286,11 @@ export class PaintField {
     const gy = Math.floor((z / this.worldSize + 0.5) * GRID_SIZE);
     if (gx < 0 || gy < 0 || gx >= GRID_SIZE || gy >= GRID_SIZE) return null;
     const value = this.data[gy * GRID_SIZE + gx];
-    return value === 1 ? 'cyan' : value === 2 ? 'orange' : null;
+    return value > 0 ? TEAM_ORDER[value - 1] ?? null : null;
   }
 
   findTarget(team: Team, origin: THREE.Vector3, out = new THREE.Vector3(), maxTries = 36) {
-    const wanted = team === 'cyan' ? 1 : 2;
+    const wanted = TEAM_ORDER.indexOf(team) + 1;
     let bestX = origin.x;
     let bestZ = origin.z;
     let bestScore = -Infinity;
@@ -330,16 +322,21 @@ export class PaintField {
   }
 
   coverage() {
-    const painted = this.cyanCells + this.orangeCells;
+    const painted = [...this.teamCells.values()].reduce((sum, count) => sum + count, 0);
     const contestedTotal = painted || 1;
     const mapTotal = this.data.length;
+    const teams = Object.fromEntries(TEAM_ORDER.map(team => [team, {
+      cells: this.teamCells.get(team) ?? 0,
+      percent: (this.teamCells.get(team) ?? 0) / contestedTotal * 100,
+      mapPercent: (this.teamCells.get(team) ?? 0) / mapTotal * 100
+    }])) as Record<Team, { cells: number; percent: number; mapPercent: number }>;
     return {
-      cyan: this.cyanCells,
-      orange: this.orangeCells,
-      cyanPercent: this.cyanCells / contestedTotal * 100,
-      orangePercent: this.orangeCells / contestedTotal * 100,
-      cyanMapPercent: this.cyanCells / mapTotal * 100,
-      orangeMapPercent: this.orangeCells / mapTotal * 100,
+      ...Object.fromEntries(TEAM_ORDER.map(team => [team, teams[team].percent])),
+      cyanPercent: teams.cyan.percent,
+      orangePercent: teams.orange.percent,
+      cyanMapPercent: teams.cyan.mapPercent,
+      orangeMapPercent: teams.orange.mapPercent,
+      teams,
       paintedPercent: painted / mapTotal * 100
     };
   }
