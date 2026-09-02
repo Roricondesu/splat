@@ -1,6 +1,7 @@
 import './style.css';
 import { NeonGame } from './game/game';
 import { SaveData, WEAPONS } from './game/config';
+import type { LiveProfile } from './live/live';
 import { GameUI } from './ui/ui';
 
 const app = document.querySelector<HTMLElement>('#app')!;
@@ -15,18 +16,19 @@ const ui = new GameUI(app, {
     game?.dispose(); game = null; ui.showHome();
   },
   pauseGame: paused => game?.setPaused(paused),
+  liveStart: profiles => beginGame(true, profiles),
   saveChanged: save => { latestSave = save; }
 });
 latestSave = ui.save;
 
-function beginGame(spectating = false) {
+function beginGame(spectating = false, liveProfiles: LiveProfile[] = []) {
   game?.dispose();
   const canvas = ui.showGameShell(spectating);
   game = new NeonGame(canvas, { ...latestSave }, {
     onStats: stats => ui.updateStats(stats),
     onHit: (damage, eliminated) => ui.showHitmarker(damage, eliminated),
     onEnd: stats => { game?.dispose(); game = null; ui.showResult(stats); }
-  });
+  }, liveProfiles);
   game.bindMobileControls(app);
   game.setSpectatorMode(spectating);
   if (location.hostname === 'localhost') {

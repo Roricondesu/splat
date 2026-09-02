@@ -1,10 +1,11 @@
 import * as THREE from 'three';
 import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
 import { ArenaBuild, createArena } from './arena';
-import { Difficulty, HAIRSTYLES, OUTFITS, SaveData, TEAM_COLORS, TEAM_ORDER, Team, WEAPONS, WeaponSpec } from './config';
+import { Difficulty, HAIRSTYLES, HairstyleId, OUTFITS, SaveData, TEAM_COLORS, TEAM_ORDER, Team, WEAPONS, WeaponSpec } from './config';
 import { animateFighter, createFighter, Fighter, resetFighterPose } from './fighter';
 import { InputController } from './input';
 import { PaintField } from './paintField';
+import type { LiveProfile } from '../live/live';
 
 interface Projectile {
   mesh: THREE.Mesh;
@@ -118,7 +119,7 @@ export class NeonGame {
   private playerShotCount = 0;
   private playerLastShotPellets = 0;
 
-  constructor(private canvas: HTMLCanvasElement, private save: SaveData, private callbacks: GameCallbacks) {
+  constructor(private canvas: HTMLCanvasElement, private save: SaveData, private callbacks: GameCallbacks, private liveProfiles: LiveProfile[] = []) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: save.quality !== 'low', powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, save.quality === 'high' ? 1.6 : save.quality === 'medium' ? 1.25 : 1));
     this.renderer.shadowMap.enabled = save.quality !== 'low';
@@ -359,8 +360,12 @@ export class NeonGame {
       const spawns = this.arena.spawns[team] ?? [];
       for (let member = 0; member < teamSize; member++) {
         const spawn = spawns[member] ?? new THREE.Vector3(Math.cos(teamIndex / teams.length * Math.PI * 2) * 24, 0, Math.sin(teamIndex / teams.length * Math.PI * 2) * 24);
+        const liveProfile = this.liveProfiles.find(profile => profile.team === team && this.liveProfiles.filter(item => item.team === team).indexOf(profile) === member);
         const isPlayer = teamIndex === 0 && member === 0;
-        const fighter = createFighter(fighterId++, team, isPlayer, isPlayer ? weapon : WEAPONS[(fighterId + 1) % WEAPONS.length], spawn, isPlayer ? outfit : OUTFITS[fighterId % OUTFITS.length], isPlayer ? this.save.hairstyle : HAIRSTYLES[fighterId % HAIRSTYLES.length].id);
+        const liveWeapon = liveProfile ? WEAPONS.find(item => item.id === liveProfile.weapon) ?? weapon : weapon;
+        const liveOutfit = liveProfile ? OUTFITS.find(item => item.id === liveProfile.outfit) ?? outfit : outfit;
+        const liveHair: HairstyleId = (liveProfile?.hairstyle as HairstyleId | undefined) ?? this.save.hairstyle;
+        const fighter = createFighter(fighterId++, team, isPlayer, liveProfile ? liveWeapon : isPlayer ? weapon : WEAPONS[(fighterId + 1) % WEAPONS.length], spawn, liveProfile ? liveOutfit : isPlayer ? outfit : OUTFITS[fighterId % OUTFITS.length], liveProfile ? liveHair : isPlayer ? this.save.hairstyle : HAIRSTYLES[fighterId % HAIRSTYLES.length].id);
         this.fighters.push(fighter); this.scene.add(fighter.group);
         if (isPlayer) this.player = fighter;
       }

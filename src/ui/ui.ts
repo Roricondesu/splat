@@ -1,7 +1,8 @@
 import { ARENAS, ArenaId, CustomRules, DEFAULT_SAVE, Difficulty, HAIRSTYLES, OutfitSpec, OUTFITS, SaveData, TEAM_COLORS, TEAM_ORDER, Team, WEAPONS, WeaponId } from '../game/config';
 import { GameStats } from '../game/game';
+import { LiveCommandProcessor, LiveProfile, createDemoMessage } from '../live/live';
 
-export type Screen = 'loading' | 'home' | 'loadout' | 'settings' | 'game' | 'result';
+export type Screen = 'loading' | 'home' | 'loadout' | 'settings' | 'game' | 'result' | 'live';
 
 export interface UIActions {
   startGame: () => void;
@@ -9,6 +10,7 @@ export interface UIActions {
   restartGame: () => void;
   quitGame: () => void;
   pauseGame: (paused: boolean) => void;
+  liveStart: (profiles: LiveProfile[]) => void;
   saveChanged: (save: SaveData) => void;
 }
 
@@ -22,6 +24,8 @@ export class GameUI {
   private endingRevealTimer?: number;
   private hitmarkerTimer?: number;
   private spectating = false;
+  private readonly live = new LiveCommandProcessor();
+  private unsubscribeLive?: () => void;
 
   constructor(private root: HTMLElement, private actions: UIActions) {
     this.save = this.loadSave();
@@ -69,6 +73,7 @@ export class GameUI {
               <button class="primary-btn huge" data-action="start"><span>开始对战</span><small>AI TURF BATTLE</small><b>→</b></button>
               <button class="secondary-btn" data-action="spectate"><span>上帝视角观战</span><small>AI VS AI</small></button>
               <button class="secondary-btn" data-action="loadout"><span>装备工坊</span><small>LOADOUT</small></button>
+              <button class="secondary-btn live-entry" data-action="live"><span>直播中心</span><small>DANMAKU LIVE</small></button>
             </div>
             <div class="control-tip desktop-only"><kbd>WASD</kbd> 移动　<kbd>空格</kbd> 跳跃　<kbd>鼠标</kbd> 瞄准　<kbd>左键</kbd> 喷涂　<kbd>Q</kbd> 水气球　<kbd>Shift</kbd> 潜入己方墨水</div>
           </section>
@@ -96,6 +101,48 @@ export class GameUI {
       if (this.save.arena === 'custom') this.showCustomMode();
       else this.showHome();
     });
+    this.bindCommon();
+  }
+
+  showLive() {
+    this.screen = 'live';
+    const state = this.live.state;
+    this.unsubscribeLive?.();
+    this.root.innerHTML = `<div class="screen panel-screen live-screen">
+      <div class="panel-bg"></div>
+      <header class="panel-header"><button class="back-btn" data-action="back">←</button><div><small>DANMAKU LIVE CONTROL</small><h2>直播中心</h2></div><div class="live-room-chip"><span class="live-dot"></span><b>房间 ${state.roomCode}</b></div></header>
+      <main class="live-layout">
+        <section class="live-console glass">
+          <div class="live-console-head"><div><small>ROOM CONTROL</small><h3>弹幕控制台</h3></div><span class="live-status" data-live-status>${state.connected ? '已连接' : '本地模拟'}</span></div>
+          <div class="live-room-settings"><div><small>队伍</small><b>${state.teamCount} 队</b></div><div><small>人数</small><b>${state.teamSize} / 队</b></div><div><small>在线</small><b data-live-viewers>${state.viewers}</b></div></div>
+          <div class="live-command-form"><label>模拟弹幕<input data-live-command value="加入青队" autocomplete="off"/></label><button class="primary-btn" data-live-send><span>发送弹幕</span><b>→</b></button></div>
+          <div class="live-quick"><button data-live-quick="加入青队">加入青队</button><button data-live-quick="商店">商店</button><button data-live-quick="买滚筒">买滚筒</button><button data-live-quick="余额">余额</button><button data-live-quick="准备">准备</button><button data-live-quick="开始直播">开始直播</button></div>
+          <div class="live-connect"><label>真实弹幕 WebSocket 地址<input data-live-url placeholder="ws://127.0.0.1:9000"/></label><button class="secondary-btn" data-live-connect>连接</button><button class="secondary-btn" data-live-disconnect>断开</button></div>
+          <button class="primary-btn live-start" data-live-start><span>开始直播对战</span><small>观众阵容将进入 AI 战场</small><b>↗</b></button>
+        </section>
+        <aside class="live-side glass"><div class="live-console-head"><div><small>VIEWERS</small><h3>观众阵容</h3></div><b data-live-viewers>${state.viewers}</b></div><div class="live-roster" data-live-roster></div></aside>
+        <section class="live-feed glass"><div class="live-console-head"><div><small>COMMAND FEED</small><h3>弹幕记录</h3></div><span>中文短指令</span></div><div class="live-feed-list" data-live-feed></div></section>
+      </main>
+    </div>`;
+    const render = () => {
+      const current = this.live.state;
+      const status = this.root.querySelector<HTMLElement>('[data-live-status]');
+      if (status) status.textContent = current.connected ? '已连接' : '本地模拟';
+      this.root.querySelectorAll<HTMLElement>('[data-live-viewers]').forEach(el => el.textContent = String(current.viewers));
+      const roster = this.root.querySelector<HTMLElement>('[data-live-roster]');
+      if (roster) roster.innerHTML = current.profiles.map(profile => `<div class="live-profile"><span class="profile-dot" style="background:${profile.team ? TEAM_COLORS[profile.team].css : '#718694'}"></span><div><b>${profile.userName}</b><small>${profile.team ? `${TEAM_COLORS[profile.team].name}队` : '未分队'} · ${profile.rank}</small></div><em>${profile.coins}币</em></div>`).join('');
+      const feed = this.root.querySelector<HTMLElement>('[data-live-feed]');
+      if (feed) feed.innerHTML = current.feed.map(item => `<div class="feed-line ${item.tone}"><b>${item.userName}</b><span>${item.content}</span><em>${item.result}</em></div>`).join('') || '<div class="feed-empty">等待弹幕指令…</div>';
+    };
+    this.unsubscribeLive = this.live.subscribe(render);
+    const send = (content: string) => { if (content.trim()) this.live.receive(createDemoMessage(content)); };
+    const input = this.root.querySelector<HTMLInputElement>('[data-live-command]')!;
+    this.root.querySelector<HTMLElement>('[data-live-send]')!.onclick = () => { send(input.value); input.select(); };
+    input.onkeydown = event => { if (event.key === 'Enter') { send(input.value); input.select(); } };
+    this.root.querySelectorAll<HTMLElement>('[data-live-quick]').forEach(button => button.onclick = () => send(button.dataset.liveQuick!));
+    this.root.querySelector<HTMLElement>('[data-live-connect]')!.onclick = () => { const url = this.root.querySelector<HTMLInputElement>('[data-live-url]')!.value.trim(); if (url) this.live.connectWebSocket(url); };
+    this.root.querySelector<HTMLElement>('[data-live-disconnect]')!.onclick = () => this.live.disconnect();
+    this.root.querySelector<HTMLElement>('[data-live-start]')!.onclick = () => { send('开始直播'); this.actions.liveStart(this.live.state.profiles.map(profile => ({ ...profile, ownedWeapons: [...profile.ownedWeapons], ownedOutfits: [...profile.ownedOutfits], ownedHairstyles: [...profile.ownedHairstyles] }))); };
     this.bindCommon();
   }
 
@@ -497,6 +544,7 @@ export class GameUI {
     this.root.querySelector<HTMLElement>('[data-action="home"]')?.addEventListener('click', this.showHome.bind(this));
     this.root.querySelector<HTMLElement>('[data-action="back"]')?.addEventListener('click', this.showHome.bind(this));
     this.root.querySelector<HTMLElement>('[data-action="loadout"]')?.addEventListener('click', this.showLoadout.bind(this));
+    this.root.querySelector<HTMLElement>('[data-action="live"]')?.addEventListener('click', this.showLive.bind(this));
     this.root.querySelector<HTMLElement>('[data-action="settings"]')?.addEventListener('click', () => this.showSettings());
   }
 
