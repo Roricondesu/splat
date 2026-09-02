@@ -17,11 +17,19 @@ interface Projectile {
   intent: 'paint' | 'fight';
 }
 
+interface SurfaceInkSample {
+  point: THREE.Vector3;
+  normal: THREE.Vector3;
+  team: Team;
+  radius: number;
+}
+
 interface WaterBomb {
   mesh: THREE.Mesh;
   velocity: THREE.Vector3;
   owner: Fighter;
   life: number;
+  previousPosition: THREE.Vector3;
 }
 
 interface CombatEffect {
@@ -69,10 +77,12 @@ export class NeonGame {
   private walkables: THREE.Object3D[];
   private obstacleBoxes: THREE.Box3[] = [];
   private surfaceDecals: THREE.Mesh[] = [];
+  private surfaceInk: SurfaceInkSample[] = [];
   private readonly surfaceRaycaster = new THREE.Raycaster();
   private readonly decalOrientation = new THREE.Euler();
   private readonly decalSize = new THREE.Vector3();
   private readonly decalMaterials: Record<Team, THREE.MeshPhysicalMaterial>;
+  private readonly surfaceSplatTexture: THREE.CanvasTexture;
   private player!: Fighter;
   private running = false;
   private paused = false;
@@ -120,9 +130,10 @@ export class NeonGame {
     this.walkables = this.arena.walkables;
     this.scene.updateMatrixWorld(true);
     this.obstacleBoxes = this.obstacles.map(object => new THREE.Box3().setFromObject(object));
+    this.surfaceSplatTexture = this.createSurfaceSplatTexture();
     this.decalMaterials = {
-      cyan: new THREE.MeshPhysicalMaterial({ color: TEAM_COLORS.cyan.main, roughness: 0.14, clearcoat: 1, clearcoatRoughness: 0.05, polygonOffset: true, polygonOffsetFactor: -4, depthWrite: false }),
-      orange: new THREE.MeshPhysicalMaterial({ color: TEAM_COLORS.orange.main, roughness: 0.14, clearcoat: 1, clearcoatRoughness: 0.05, polygonOffset: true, polygonOffsetFactor: -4, depthWrite: false })
+      cyan: new THREE.MeshPhysicalMaterial({ color: TEAM_COLORS.cyan.main, alphaMap: this.surfaceSplatTexture, transparent: true, alphaTest: 0.08, roughness: 0.12, clearcoat: 1, clearcoatRoughness: 0.04, polygonOffset: true, polygonOffsetFactor: -4, depthWrite: false }),
+      orange: new THREE.MeshPhysicalMaterial({ color: TEAM_COLORS.orange.main, alphaMap: this.surfaceSplatTexture, transparent: true, alphaTest: 0.08, roughness: 0.12, clearcoat: 1, clearcoatRoughness: 0.04, polygonOffset: true, polygonOffsetFactor: -4, depthWrite: false })
     };
     this.paint = new PaintField(this.scene, this.arena.worldSize);
     this.projectileGeometries = {
@@ -163,9 +174,10 @@ export class NeonGame {
     this.projectiles.forEach(p => { this.scene.remove(p.mesh); p.tail.forEach(t => this.scene.remove(t)); }); this.projectiles = [];
     this.waterBombs.forEach(bomb => { this.scene.remove(bomb.mesh); bomb.mesh.geometry.dispose(); (bomb.mesh.material as THREE.Material).dispose(); }); this.waterBombs = [];
     this.effects.forEach(e => this.scene.remove(e.group)); this.effects = [];
-    for (const f of this.fighters) { f.swim = false; f.swimLevel = 0; }
+      for (const f of this.fighters) { f.swim = false; f.swimLevel = 0; f.surfaceClimbing = false; f.surfaceNormal.set(0, 1, 0); }
     this.surfaceDecals.forEach(decal => { this.scene.remove(decal); decal.geometry.dispose(); });
     this.surfaceDecals = [];
+    this.surfaceInk = [];
     for (const f of this.fighters) {
       f.group.position.copy(f.spawn); f.health = 100; f.ammo = 100; f.alive = true; f.group.visible = true; f.score = 0; f.spawnPulse = 1; f.recoil = 0;
       f.verticalVelocity = 0; f.grounded = true; f.previousGrounded = true; f.landingPulse = 0;
@@ -173,7 +185,7 @@ export class NeonGame {
       f.aiNextPaintShotAt = 0.12 + Math.random() * 0.28; f.aiPaintShots = 0; f.aiFightShots = 0; f.aiProductivePaintCells = 0;
       f.aiStuckTime = 0; f.aiLastPosX = f.spawn.x; f.aiLastPosZ = f.spawn.z; f.aiSteerBias = 0; f.aiSteerUntil = 0;
       f.aiJumpCooldown = 0.35 + Math.random() * 0.45; f.aiJumpCount = 0;
-      f.lastDamagedAt = -Infinity; f.inkStain = 0; f.inkStainTeam = null; f.rollerHitCooldown = 0;
+      f.lastDamagedAt = -Infinity; f.inkStain = 0; f.inkStainTeam = null; f.rollerHitCooldown = 0; f.surfaceClimbing = false; f.surfaceNormal.set(0, 1, 0);
       f.lastRollerPaintX = f.spawn.x; f.lastRollerPaintZ = f.spawn.z;
       resetFighterPose(f);
       if (f.isPlayer) f.group.rotation.y = this.cameraYaw + Math.PI;
@@ -199,6 +211,8 @@ export class NeonGame {
       firing: this.input.state.firing,
       submergeHeld: this.input.state.submerge,
       playerSubmerged: this.player.swim,
+      playerSurfaceClimbing: this.player.surfaceClimbing,
+      playerSurfaceNormal: { x: this.player.surfaceNormal.x, y: this.player.surfaceNormal.y, z: this.player.surfaceNormal.z },
       moveX: this.input.state.moveX,
       moveY: this.input.state.moveY,
       spectatorMode: this.spectatorMode,
@@ -225,6 +239,7 @@ export class NeonGame {
       aiProductivePaintCells: this.fighters.reduce((sum, fighter) => sum + fighter.aiProductivePaintCells, 0),
       projectiles: this.projectiles.length,
       waterBombs: this.waterBombs.length,
+      surfaceInk: this.surfaceInk.length,
       projectileSnapshot: this.projectiles.map(projectile => ({
         ownerId: projectile.owner.id,
         weapon: projectile.weapon.id,
@@ -291,12 +306,41 @@ export class NeonGame {
     return true;
   }
 
+  debugPrepareWallClimb() {
+    if (location.hostname !== 'localhost') return false;
+    const candidate = this.obstacleBoxes
+      .map((box, index) => ({ box, object: this.obstacles[index] }))
+      .filter(item => item.box.max.y > 2.4 && item.box.getSize(this.scratchA).x > 4)
+      .sort((a, b) => a.box.min.x - b.box.min.x)[0];
+    if (!candidate) return false;
+    const box = candidate.box;
+    const wallX = box.min.x;
+    const y = Math.min(box.max.y - 1, Math.max(1.4, box.min.y + 1.8));
+    const z = THREE.MathUtils.clamp(box.getCenter(this.scratchA).z, box.min.z + 1, box.max.z - 1);
+    const origin = new THREE.Vector3(wallX - 4, y, z);
+    this.surfaceRaycaster.set(origin, new THREE.Vector3(1, 0, 0));
+    this.surfaceRaycaster.far = 8;
+    const hit = this.surfaceRaycaster.intersectObjects(this.paintables, false)[0];
+    if (!hit) return false;
+    this.paintSurfaceHit(hit, this.player.team, 3.4, 'burst');
+    const normal = hit.face!.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
+    this.player.group.position.copy(hit.point).addScaledVector(normal, BODY_RADIUS + 0.05);
+    this.player.group.position.y = y;
+    this.player.velocity.set(0, 0, 0);
+    this.player.verticalVelocity = 0;
+    this.player.grounded = false;
+    this.player.surfaceNormal.copy(normal);
+    this.player.surfacePoint.copy(hit.point);
+    return true;
+  }
+
   dispose() {
     this.running = false;
     window.removeEventListener('resize', this.resize);
     this.input.dispose();
     this.paint.dispose();
     this.surfaceDecals.forEach(decal => { this.scene.remove(decal); decal.geometry.dispose(); });
+    this.surfaceSplatTexture.dispose();
     Object.values(this.decalMaterials).forEach(material => material.dispose());
     Object.values(this.projectileGeometries).forEach(geometry => geometry.dispose());
     Object.values(this.projectileMaterials).forEach(material => material.dispose());
@@ -368,26 +412,37 @@ export class NeonGame {
     const forward = new THREE.Vector3(-Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw));
     const right = new THREE.Vector3(Math.cos(this.cameraYaw), 0, -Math.sin(this.cameraYaw));
     const desired = forward.multiplyScalar(this.input.state.moveY).add(right.multiplyScalar(this.input.state.moveX));
-    const facingYaw = this.cameraYaw + Math.PI;
-    this.player.group.rotation.y = facingYaw;
-    const onOwn = this.paint.teamAt(this.player.group.position.x, this.player.group.position.z) === this.player.team;
     const wantsSubmerge = this.input.state.submerge;
-    const canSubmerge = wantsSubmerge && onOwn && this.player.grounded;
+    const groundOwn = this.paint.teamAt(this.player.group.position.x, this.player.group.position.z) === this.player.team;
+    const surfaceInk = this.findSurfaceInk(this.player, this.player.team);
+    const surfaceOwn = Boolean(surfaceInk);
+    const canSubmerge = wantsSubmerge && (groundOwn || surfaceOwn) && (this.player.grounded || surfaceOwn);
     this.player.swim = canSubmerge;
-    const weaponSpeed = this.player.weapon.speedScale ?? 1;
-    const speed = (canSubmerge ? 10.1 : onOwn ? 7.15 : 6.3) * weaponSpeed;
-    if (desired.lengthSq() > 0.01) {
-      desired.normalize().multiplyScalar(speed);
-      this.player.velocity.lerp(desired, 1 - Math.pow(0.001, dt));
-    } else this.player.velocity.lerp(new THREE.Vector3(0, this.player.velocity.y, 0), 1 - Math.pow(0.02, dt));
-    if (this.input.consumeJump() && this.player.grounded) {
-      this.player.verticalVelocity = 8.6;
-      this.player.grounded = false;
-      this.player.previousGrounded = false;
-      this.spawnJumpBurst(this.player.group.position, this.player.team);
-      this.playTone(440, 0.08, 0.035);
+    this.player.surfaceClimbing = Boolean(canSubmerge && surfaceInk && Math.abs(surfaceInk.normal.y) < 0.72);
+    if (surfaceInk) {
+      this.player.surfaceNormal.copy(surfaceInk.normal);
+      this.player.surfacePoint.copy(surfaceInk.point);
     }
-    this.moveFighter(this.player, dt);
+    const facingYaw = this.cameraYaw + Math.PI;
+    if (!this.player.surfaceClimbing) this.player.group.rotation.set(0, facingYaw, 0);
+    const weaponSpeed = this.player.weapon.speedScale ?? 1;
+    const speed = (canSubmerge ? 10.1 : groundOwn || surfaceOwn ? 7.15 : 6.3) * weaponSpeed;
+    if (this.player.surfaceClimbing && surfaceInk) {
+      this.moveFighterOnSurface(this.player, dt, surfaceInk, speed);
+    } else {
+      if (desired.lengthSq() > 0.01) {
+        desired.normalize().multiplyScalar(speed);
+        this.player.velocity.lerp(desired, 1 - Math.pow(0.001, dt));
+      } else this.player.velocity.lerp(new THREE.Vector3(0, this.player.velocity.y, 0), 1 - Math.pow(0.02, dt));
+      if (this.input.consumeJump() && this.player.grounded) {
+        this.player.verticalVelocity = 8.6;
+        this.player.grounded = false;
+        this.player.previousGrounded = false;
+        this.spawnJumpBurst(this.player.group.position, this.player.team);
+        this.playTone(440, 0.08, 0.035);
+      }
+      this.moveFighter(this.player, dt);
+    }
     if (this.input.consumeWaterBomb()) this.throwWaterBomb(this.player, this.aimDirection());
     const firePressed = this.input.consumeFirePress();
     if (!canSubmerge && this.input.state.firing && (this.player.weapon.automatic || firePressed)) {
@@ -518,10 +573,12 @@ export class NeonGame {
       return;
     }
     const paintHere = this.paint.teamAt(f.group.position.x, f.group.position.z);
-    const ownPaint = paintHere === f.team;
+    const ownGroundPaint = paintHere === f.team;
+    const ownSurfacePaint = Boolean(this.findSurfaceInk(f, f.team));
+    const ownPaint = ownGroundPaint || ownSurfacePaint;
     const speed = f.velocity.length();
-    // Submerging is explicit for the player and tactical for AI. It is the only way to refill ammo.
-    if (!ownPaint || !f.grounded) f.swim = false;
+    // Ground, platform tops, ramps and vertical faces all use the same allied-ink rule.
+    if (!ownPaint || (!f.grounded && !f.surfaceClimbing)) f.swim = false;
     if (this.save.infiniteHealth && f.isPlayer) f.health = 100;
     if (this.save.infiniteInk && f.isPlayer) f.ammo = 100;
     if (f.swim) f.ammo = Math.min(100, f.ammo + dt * 46);
@@ -627,6 +684,54 @@ export class NeonGame {
       if (eliminated) this.eliminate(target, owner);
       owner.rollerHitCooldown = 0.45;
       break;
+    }
+  }
+
+  private findSurfaceInk(fighter: Fighter, team: Team) {
+    let best: SurfaceInkSample | null = null;
+    let bestScore = Infinity;
+    for (const sample of this.surfaceInk) {
+      if (sample.team !== team) continue;
+      const toFighter = this.scratchA.subVectors(fighter.group.position, sample.point);
+      const planeDistance = Math.abs(toFighter.dot(sample.normal));
+      const tangentDistanceSq = Math.max(0, toFighter.lengthSq() - planeDistance * planeDistance);
+      const reach = sample.radius * 1.08 + 0.5;
+      if (planeDistance > 1.15 || tangentDistanceSq > reach * reach) continue;
+      const score = planeDistance * planeDistance + tangentDistanceSq * 0.18;
+      if (score < bestScore) {
+        bestScore = score;
+        best = sample;
+      }
+    }
+    return best;
+  }
+
+  private moveFighterOnSurface(fighter: Fighter, dt: number, sample: SurfaceInkSample, speed: number) {
+    const normal = sample.normal;
+    const wallRight = new THREE.Vector3(0, 1, 0).cross(normal).normalize();
+    if (wallRight.lengthSq() < 0.01) wallRight.set(Math.cos(this.cameraYaw), 0, -Math.sin(this.cameraYaw));
+    const wallUp = new THREE.Vector3().copy(normal).cross(wallRight).normalize();
+    const tangentMove = new THREE.Vector3().copy(wallRight).multiplyScalar(this.input.state.moveX)
+      .addScaledVector(wallUp, this.input.state.moveY);
+    if (tangentMove.lengthSq() > 0.01) tangentMove.normalize().multiplyScalar(speed);
+    fighter.velocity.lerp(tangentMove, 1 - Math.pow(0.001, dt));
+    const offset = BODY_RADIUS + 0.07;
+    const planeDistance = new THREE.Vector3().subVectors(fighter.group.position, sample.point).dot(normal);
+    fighter.group.position.addScaledVector(normal, offset - planeDistance);
+    fighter.group.position.addScaledVector(fighter.velocity, dt);
+    fighter.verticalVelocity = 0;
+    fighter.grounded = false;
+    fighter.surfaceNormal.copy(normal);
+    fighter.surfacePoint.copy(sample.point);
+    const facing = wallUp.clone().multiplyScalar(Math.sign(this.input.state.moveY || 1));
+    fighter.group.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(wallRight, normal, facing));
+    if (this.input.consumeJump()) {
+      fighter.surfaceClimbing = false;
+      fighter.swim = false;
+      fighter.group.rotation.set(0, this.cameraYaw + Math.PI, 0);
+      fighter.group.position.addScaledVector(normal, 0.35);
+      fighter.velocity.copy(normal).multiplyScalar(6.4);
+      fighter.verticalVelocity = 4.8;
     }
   }
 
@@ -755,7 +860,8 @@ export class NeonGame {
       mesh,
       velocity: horizontal.multiplyScalar(16).add(new THREE.Vector3(0, 9.4 + forward.y * 4, 0)),
       owner,
-      life: 2.8
+      life: 2.8,
+      previousPosition: mesh.position.clone()
     });
     this.spawnMuzzleFlash(mesh.position, owner.team, aim, 1.4);
     this.playTone(owner.team === 'cyan' ? 260 : 210, 0.09, 0.055);
@@ -767,16 +873,25 @@ export class NeonGame {
       const bomb = this.waterBombs[i];
       bomb.life -= dt;
       bomb.velocity.y -= 18 * dt;
+      bomb.previousPosition.copy(bomb.mesh.position);
       bomb.mesh.position.addScaledVector(bomb.velocity, dt);
       bomb.mesh.rotation.x += dt * 6;
       bomb.mesh.rotation.z += dt * 8;
       const pos = bomb.mesh.position;
+      let surfaceHit: THREE.Intersection<THREE.Object3D> | undefined;
+      const travel = this.scratchA.subVectors(pos, bomb.previousPosition);
+      if (travel.lengthSq() > 0.0001) {
+        const travelLength = travel.length();
+        this.surfaceRaycaster.set(bomb.previousPosition, travel.multiplyScalar(1 / travelLength));
+        this.surfaceRaycaster.far = travelLength;
+        surfaceHit = this.surfaceRaycaster.intersectObjects(this.paintables, false)[0];
+      }
       const groundY = this.groundHeightAt(pos);
       const worldHalf = this.arena.worldSize * 0.5;
-      const detonate = bomb.life <= 0 || pos.y <= groundY + 0.2 || Math.abs(pos.x) > worldHalf || Math.abs(pos.z) > worldHalf;
+      const detonate = Boolean(surfaceHit) || bomb.life <= 0 || pos.y <= groundY + 0.2 || Math.abs(pos.x) > worldHalf || Math.abs(pos.z) > worldHalf;
       if (!detonate) continue;
-      pos.y = Math.max(groundY + 0.06, 0.06);
-      this.explodeWaterBomb(bomb);
+      if (surfaceHit) pos.copy(surfaceHit.point); else pos.y = Math.max(groundY + 0.06, 0.06);
+      this.explodeWaterBomb(bomb, surfaceHit);
       this.scene.remove(bomb.mesh);
       bomb.mesh.geometry.dispose();
       (bomb.mesh.material as THREE.Material).dispose();
@@ -784,9 +899,11 @@ export class NeonGame {
     }
   }
 
-  private explodeWaterBomb(bomb: WaterBomb) {
+  private explodeWaterBomb(bomb: WaterBomb, surfaceHit?: THREE.Intersection<THREE.Object3D>) {
     const position = bomb.mesh.position;
     const radius = 5.1;
+    if (surfaceHit) this.paintSurfaceHit(surfaceHit, bomb.owner.team, radius * 0.78, 'burst');
+    this.paintExplosionOnNearbySurfaces(position, bomb.owner.team, radius * 0.78, surfaceHit?.object);
     this.paint.paintImpact(position.x, position.z, radius, bomb.owner.team, bomb.velocity.x, bomb.velocity.z, 0.18, 'burst');
     this.spawnPaintSplash(position, bomb.owner.team, 1.75);
     this.spawnGroundRing(position, bomb.owner.team, 0.55, 6.3, 0.52);
@@ -812,6 +929,20 @@ export class NeonGame {
     bomb.owner.score += 18;
     if (bomb.owner.isPlayer) this.cameraShake = Math.max(this.cameraShake, 0.42);
     this.playTone(92, 0.18, 0.085);
+  }
+
+  private paintExplosionOnNearbySurfaces(position: THREE.Vector3, team: Team, radius: number, skip?: THREE.Object3D) {
+    const directions = [
+      new THREE.Vector3(1, 0, 0), new THREE.Vector3(-1, 0, 0),
+      new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, -1, 0),
+      new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, 0, -1)
+    ];
+    for (const direction of directions) {
+      this.surfaceRaycaster.set(position, direction);
+      this.surfaceRaycaster.far = radius * 0.72;
+      const hit = this.surfaceRaycaster.intersectObjects(this.paintables, false).find(item => item.object !== skip);
+      if (hit) this.paintSurfaceHit(hit, team, radius * 0.42, 'burst');
+    }
   }
 
   private updateProjectiles(dt: number) {
@@ -889,6 +1020,36 @@ export class NeonGame {
     this.projectiles.splice(index, 1);
   }
 
+  private createSurfaceSplatTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    const lobes = 18;
+    for (let i = 0; i <= lobes; i++) {
+      const angle = i / lobes * Math.PI * 2;
+      const radius = 45 + Math.sin(angle * 7) * 8 + Math.sin(angle * 11 + 0.8) * 5;
+      const x = 64 + Math.cos(angle) * radius;
+      const y = 64 + Math.sin(angle) * radius;
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.fill();
+    for (const [x, y, r] of [[18, 34, 6], [109, 43, 8], [96, 106, 5], [29, 104, 7]] as const) {
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.NoColorSpace;
+    texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+    texture.needsUpdate = true;
+    return texture;
+  }
+
   private paintSurfaceHit(hit: THREE.Intersection<THREE.Object3D>, team: Team, radius: number, weaponId: WeaponSpec['id']) {
     if (!(hit.object instanceof THREE.Mesh) || !hit.face) return;
     const normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
@@ -903,6 +1064,13 @@ export class NeonGame {
       decal.userData.team = team;
       this.scene.add(decal);
       this.surfaceDecals.push(decal);
+      this.surfaceInk = this.surfaceInk.filter(sample => {
+        if (sample.team === team) return true;
+        const samePlane = sample.normal.dot(normal) > 0.82;
+        return !samePlane || sample.point.distanceToSquared(position) > (sample.radius + radius) ** 2 * 0.38;
+      });
+      this.surfaceInk.push({ point: position.clone(), normal: normal.clone(), team, radius });
+      if (this.surfaceInk.length > 220) this.surfaceInk.shift();
       const maxDecals = this.save.quality === 'high' ? 260 : this.save.quality === 'medium' ? 170 : 90;
       if (this.surfaceDecals.length > maxDecals) {
         const oldest = this.surfaceDecals.shift()!;

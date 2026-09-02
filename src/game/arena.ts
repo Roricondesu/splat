@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { ArenaId, Team } from './config';
 
 const INK = 0x17303e;
-const WHITE = 0xf5f0df;
+const WHITE = 0xf4f8fa;
 const CONCRETE = 0xb8c5cb;
 const CYAN = 0x18cfc7;
 const ORANGE = 0xff6b2b;
@@ -175,102 +175,93 @@ function addPerimeter(ctx: BuildContext, size = 46) {
 }
 
 function buildSkylineMarket(ctx: BuildContext) {
-  addPerimeter(ctx);
+  const size = 72;
+  addPerimeter(ctx, size);
 
-  // A stepped central bazaar with two accessible roof levels.
-  placeBox(ctx, [8.2, 2.2, 7.2], [0, 1.1, 0], SAND, { solid: true, walkable: true, gloss: true });
-  placeBox(ctx, [4.8, 1.8, 4.4], [0, 3.1, 0], PINK, { solid: true, walkable: true, gloss: true });
-  placeRamp(ctx, new THREE.Vector3(0, 0, 6.2), 3.2, 5.8, 2.35, 0, BLUE);
-  placeRamp(ctx, new THREE.Vector3(0, 2.2, -4.3), 2.6, 3.5, 1.95, Math.PI, PURPLE);
+  // White modular blocks keep the arena readable while giving every route a paintable face.
+  placeBox(ctx, [18, 1.2, 18], [0, 0.6, 0], WHITE, { solid: true, walkable: true, gloss: true });
+  placeBox(ctx, [10, 2.4, 10], [0, 1.8, 0], WHITE, { solid: true, walkable: true, gloss: true });
+  placeRamp(ctx, new THREE.Vector3(0, 0, 12.5), 5.2, 10.5, 2.4, 0, WHITE);
+  placeRamp(ctx, new THREE.Vector3(0, 2.4, -8.5), 4.4, 7.5, 2.2, Math.PI, WHITE);
 
-  const nw = building(ctx, -13.3, -9, 7, 6.4, 3.4, PINK, PURPLE);
-  const se = building(ctx, 13.3, 9, 7, 6.4, 3.4, BLUE, CYAN);
-  const ne = building(ctx, 13.6, -10.5, 6, 5.4, 4.6, SAND, ORANGE);
-  const sw = building(ctx, -13.6, 10.5, 6, 5.4, 4.6, 0x9bd7bd, CYAN);
+  const nw = building(ctx, -20, -18, 12, 10, 4.8, WHITE, INK);
+  const se = building(ctx, 20, 18, 12, 10, 4.8, WHITE, INK);
+  const ne = building(ctx, 21, -18, 10, 9, 6.4, WHITE, INK);
+  const sw = building(ctx, -21, 18, 10, 9, 6.4, WHITE, INK);
+  nw.userData.route = 'northwest-block';
+  se.userData.route = 'southeast-block';
+  ne.userData.route = 'high-east';
+  sw.userData.route = 'high-west';
 
-  // Exterior ramps and roof-to-roof bridges create flanking routes.
-  placeRamp(ctx, new THREE.Vector3(-13.3, 0, -3.1), 3.8, 7.4, 3.55, 0, PINK);
-  placeRamp(ctx, new THREE.Vector3(13.3, 0, 3.1), 3.8, 7.4, 3.55, Math.PI, BLUE);
-  placeRamp(ctx, new THREE.Vector3(8.4, 0, -10.5), 3.6, 8.2, 4.75, Math.PI / 2, SAND);
-  placeRamp(ctx, new THREE.Vector3(-8.4, 0, 10.5), 3.6, 8.2, 4.75, -Math.PI / 2, 0x9bd7bd);
-  placeBox(ctx, [6.2, 0.35, 2.3], [-7, 3.6, -5], WHITE, { walkable: true, gloss: true, rotationY: 0.55 });
-  placeBox(ctx, [6.2, 0.35, 2.3], [7, 3.6, 5], WHITE, { walkable: true, gloss: true, rotationY: 0.55 });
-  placeBox(ctx, [6.5, 0.34, 1.9], [0, 4.35, -7.5], PURPLE, { walkable: true, gloss: true });
-  placeBox(ctx, [6.5, 0.34, 1.9], [0, 4.35, 7.5], CYAN, { walkable: true, gloss: true });
+  // Broad flank ramps, roof bridges and climbable vertical faces.
+  placeRamp(ctx, new THREE.Vector3(-20, 0, -9), 5.2, 9.5, 4.8, 0, WHITE);
+  placeRamp(ctx, new THREE.Vector3(20, 0, 9), 5.2, 9.5, 4.8, Math.PI, WHITE);
+  placeRamp(ctx, new THREE.Vector3(10, 0, -18), 5.2, 11, 6.4, Math.PI / 2, WHITE);
+  placeRamp(ctx, new THREE.Vector3(-10, 0, 18), 5.2, 11, 6.4, -Math.PI / 2, WHITE);
+  placeBox(ctx, [11, 0.45, 3.2], [-9, 5.15, -10], WHITE, { walkable: true, gloss: true, rotationY: 0.25 });
+  placeBox(ctx, [11, 0.45, 3.2], [9, 5.15, 10], WHITE, { walkable: true, gloss: true, rotationY: -0.25 });
+  placeBox(ctx, [14, 0.45, 3.5], [0, 7.05, -22], WHITE, { walkable: true, gloss: true });
+  placeBox(ctx, [14, 0.45, 3.5], [0, 7.05, 22], WHITE, { walkable: true, gloss: true });
 
-  arch(ctx, 0, -14.5, 0, PURPLE);
-  arch(ctx, 0, 14.5, Math.PI, CYAN);
-  crateStack(ctx, -8.5, 4.5, ORANGE, 2);
-  crateStack(ctx, 8.5, -4.5, CYAN, 2);
-  crateStack(ctx, -18, -4, PURPLE, 1);
-  crateStack(ctx, 18, 4, PINK, 1);
-
-  // Neon canopy ribs over the middle lane.
-  for (const z of [-4.8, 0, 4.8]) {
-    pipe(ctx, new THREE.Vector3(-5.3, 5.4, z), new THREE.Vector3(5.3, 5.4, z), 0.16, z === 0 ? LIME : INK);
-  }
-
-  // Keep referenced roots active for matrix updates and clarify deliberate symmetry.
-  nw.userData.route = 'cyan-roof';
-  se.userData.route = 'orange-roof';
-  ne.userData.route = 'high-flank';
-  sw.userData.route = 'high-flank';
+  arch(ctx, 0, -28, 0, WHITE);
+  arch(ctx, 0, 28, Math.PI, WHITE);
+  crateStack(ctx, -12, 9, WHITE, 2);
+  crateStack(ctx, 12, -9, WHITE, 2);
+  crateStack(ctx, -29, -8, WHITE, 1);
+  crateStack(ctx, 29, 8, WHITE, 1);
+  for (const z of [-9, 0, 9]) pipe(ctx, new THREE.Vector3(-8, 8.2, z), new THREE.Vector3(8, 8.2, z), 0.2, INK);
 
   return {
-    cyan: [new THREE.Vector3(-17, 0, 16), new THREE.Vector3(-14, 0, 18), new THREE.Vector3(-19, 0, 12), new THREE.Vector3(-11, 0, 14)],
-    orange: [new THREE.Vector3(17, 0, -16), new THREE.Vector3(14, 0, -18), new THREE.Vector3(19, 0, -12), new THREE.Vector3(11, 0, -14)]
+    cyan: [new THREE.Vector3(-31, 0, 29), new THREE.Vector3(-27, 0, 31), new THREE.Vector3(-33, 0, 24), new THREE.Vector3(-29, 0, 25)],
+    orange: [new THREE.Vector3(31, 0, -29), new THREE.Vector3(27, 0, -31), new THREE.Vector3(33, 0, -24), new THREE.Vector3(29, 0, -25)]
   };
 }
 
 function buildCanalFoundry(ctx: BuildContext) {
-  addPerimeter(ctx);
+  const size = 72;
+  addPerimeter(ctx, size);
 
-  // Raised foundry banks leave a low central canal with multiple crossings.
-  placeBox(ctx, [17, 1.7, 43], [-13.4, 0.85, 0], 0xaebbc1, { solid: true, walkable: true, gloss: true });
-  placeBox(ctx, [17, 1.7, 43], [13.4, 0.85, 0], 0xaebbc1, { solid: true, walkable: true, gloss: true });
-  for (const z of [-13, 0, 13]) {
-    placeBox(ctx, [10.2, 0.38, 4.2], [0, 2.05, z], z === 0 ? ORANGE : WHITE, { walkable: true, gloss: true });
-    // Short transition ramps connect the 1.7 m banks to the 2.24 m bridge deck.
-    // Their high ends point toward the canal; the old ramps crossed deep into the
-    // solid banks and could leave fighters grounded inside bank colliders.
-    placeRamp(ctx, new THREE.Vector3(-5.9, 1.57, z), 4.1, 2, 0.54, Math.PI / 2, CYAN);
-    placeRamp(ctx, new THREE.Vector3(5.9, 1.57, z), 4.1, 2, 0.54, -Math.PI / 2, ORANGE);
+  // A white-block canal: long banks, broad crossings and a visible central trench.
+  placeBox(ctx, [22, 1.8, 58], [-20, 0.9, 0], WHITE, { solid: true, walkable: true, gloss: true });
+  placeBox(ctx, [22, 1.8, 58], [20, 0.9, 0], WHITE, { solid: true, walkable: true, gloss: true });
+  placeBox(ctx, [12, 0.45, 5.2], [0, 2.25, -20], WHITE, { walkable: true, gloss: true });
+  placeBox(ctx, [12, 0.45, 5.2], [0, 2.25, 0], WHITE, { walkable: true, gloss: true });
+  placeBox(ctx, [12, 0.45, 5.2], [0, 2.25, 20], WHITE, { walkable: true, gloss: true });
+  for (const z of [-20, 0, 20]) {
+    placeRamp(ctx, new THREE.Vector3(-9, 1.65, z), 5.2, 4, 0.6, Math.PI / 2, WHITE);
+    placeRamp(ctx, new THREE.Vector3(9, 1.65, z), 5.2, 4, 0.6, -Math.PI / 2, WHITE);
   }
 
-  // Two asymmetric factories: one compact tower, one long processing hall.
-  building(ctx, -14.4, -10.5, 7.2, 8, 5.1, BLUE, CYAN);
-  building(ctx, 14.2, 10.2, 7.8, 9.2, 4.2, SAND, ORANGE);
-  building(ctx, -14.6, 11.8, 5.6, 6.4, 3.2, PINK, PURPLE);
-  building(ctx, 14.8, -12.2, 5.8, 6, 5.7, 0x9bd7bd, LIME);
+  building(ctx, -21, -19, 13, 12, 6.2, WHITE, INK);
+  building(ctx, 21, 19, 13, 12, 5.2, WHITE, INK);
+  building(ctx, -21, 19, 10, 10, 4, WHITE, INK);
+  building(ctx, 21, -19, 10, 10, 7.2, WHITE, INK);
+  placeRamp(ctx, new THREE.Vector3(-21, 1.8, -8), 5.2, 11, 4.4, 0, WHITE);
+  placeRamp(ctx, new THREE.Vector3(21, 1.8, 8), 5.2, 11, 3.4, Math.PI, WHITE);
+  placeRamp(ctx, new THREE.Vector3(21, 1.8, -9), 5.2, 12, 5.4, Math.PI, WHITE);
 
-  placeRamp(ctx, new THREE.Vector3(-14.2, 1.65, -3.4), 4, 8.2, 3.6, 0, BLUE);
-  placeRamp(ctx, new THREE.Vector3(14.2, 1.65, 3), 4, 7.4, 2.7, Math.PI, SAND);
-  placeRamp(ctx, new THREE.Vector3(14.7, 1.65, -6.8), 3.8, 8.8, 4.2, Math.PI, 0x9bd7bd);
-
-  // Walkable overhead service lanes.
-  placeBox(ctx, [3, 0.34, 16], [-8.2, 4.7, 4], CYAN, { walkable: true, gloss: true });
-  placeBox(ctx, [3, 0.34, 16], [8.2, 4.7, -4], ORANGE, { walkable: true, gloss: true });
-  placeBox(ctx, [13.6, 0.34, 2.5], [0, 4.7, 4], WHITE, { walkable: true, gloss: true });
-  placeBox(ctx, [13.6, 0.34, 2.5], [0, 4.7, -4], WHITE, { walkable: true, gloss: true });
-
-  // Pipes, tanks and cargo make the channels less linear.
-  for (const x of [-18, 18]) {
-    const tank = new THREE.Mesh(new THREE.CylinderGeometry(1.65, 1.65, 4.8, 16), glossy(x < 0 ? CYAN : ORANGE));
-    tank.position.set(x, 4.1, x < 0 ? 2.5 : -2.5);
+  // Elevated service decks are white, continuous and reachable from both banks.
+  placeBox(ctx, [4.4, 0.45, 22], [-10, 5.9, 10], WHITE, { walkable: true, gloss: true });
+  placeBox(ctx, [4.4, 0.45, 22], [10, 5.9, -10], WHITE, { walkable: true, gloss: true });
+  placeBox(ctx, [18, 0.45, 3.8], [0, 5.9, 10], WHITE, { walkable: true, gloss: true });
+  placeBox(ctx, [18, 0.45, 3.8], [0, 5.9, -10], WHITE, { walkable: true, gloss: true });
+  for (const x of [-29, 29]) {
+    const tank = new THREE.Mesh(new THREE.CylinderGeometry(2.1, 2.1, 6.2, 16), glossy(WHITE));
+    tank.position.set(x, 3.1, x < 0 ? 8 : -8);
     addObject(ctx, tank, { solid: true });
   }
-  pipe(ctx, new THREE.Vector3(-19, 6.6, -17), new THREE.Vector3(19, 6.6, -17), 0.38, PURPLE);
-  pipe(ctx, new THREE.Vector3(-19, 7.5, 17), new THREE.Vector3(19, 7.5, 17), 0.3, LIME);
-  crateStack(ctx, -6.8, -7.2, CYAN, 2);
-  crateStack(ctx, 6.8, 7.2, ORANGE, 2);
-  crateStack(ctx, -4.8, 15.8, PURPLE, 1);
-  crateStack(ctx, 4.8, -15.8, SAND, 1);
-  arch(ctx, 0, -19, 0, PURPLE);
-  arch(ctx, 0, 19, Math.PI, LIME);
+  pipe(ctx, new THREE.Vector3(-31, 8, -25), new THREE.Vector3(31, 8, -25), 0.42, INK);
+  pipe(ctx, new THREE.Vector3(-31, 9, 25), new THREE.Vector3(31, 9, 25), 0.34, INK);
+  crateStack(ctx, -12, -10, WHITE, 2);
+  crateStack(ctx, 12, 10, WHITE, 2);
+  crateStack(ctx, -7, 27, WHITE, 1);
+  crateStack(ctx, 7, -27, WHITE, 1);
+  arch(ctx, 0, -31, 0, WHITE);
+  arch(ctx, 0, 31, Math.PI, WHITE);
 
   return {
-    cyan: [new THREE.Vector3(-8.5, 1.72, 18), new THREE.Vector3(-11, 1.72, 18), new THREE.Vector3(-8.5, 1.72, 13.5), new THREE.Vector3(-11, 1.72, 13.5)],
-    orange: [new THREE.Vector3(8.5, 1.72, -18), new THREE.Vector3(11, 1.72, -18), new THREE.Vector3(8.5, 1.72, -13.5), new THREE.Vector3(11, 1.72, -13.5)]
+    cyan: [new THREE.Vector3(-32, 0, 28), new THREE.Vector3(-28, 0, 30), new THREE.Vector3(-33, 0, 22), new THREE.Vector3(-28, 0, 24)],
+    orange: [new THREE.Vector3(32, 0, -28), new THREE.Vector3(28, 0, -30), new THREE.Vector3(33, 0, -22), new THREE.Vector3(28, 0, -24)]
   };
 }
 
@@ -314,15 +305,15 @@ function buildBlankExpanse(ctx: BuildContext) {
 
 function addWorldLighting(scene: THREE.Scene, root: THREE.Group, id: ArenaId) {
   const isBlank = id === 'blank-expanse';
-  scene.background = new THREE.Color(id === 'skyline-market' ? 0x9ed6e8 : isBlank ? 0xb9e4ef : 0x89b9cf);
-  scene.fog = new THREE.FogExp2(id === 'skyline-market' ? 0xaeddeb : isBlank ? 0xc5e9f0 : 0x9dc5d5, isBlank ? 0.006 : 0.01);
+  scene.background = new THREE.Color(isBlank ? 0xb9e4ef : 0xd4edf2);
+  scene.fog = new THREE.FogExp2(isBlank ? 0xc5e9f0 : 0xdff3f4, isBlank ? 0.006 : 0.007);
   const hemi = new THREE.HemisphereLight(0xe2f5ff, 0xe6d7bd, 2.1);
   root.add(hemi);
   const sun = new THREE.DirectionalLight(0xffe8bd, 3.15);
   sun.position.set(-18, 35, 15);
   sun.castShadow = true;
   sun.shadow.mapSize.set(1024, 1024);
-  const shadowExtent = isBlank ? 42 : 30;
+  const shadowExtent = 42;
   sun.shadow.camera.left = -shadowExtent;
   sun.shadow.camera.right = shadowExtent;
   sun.shadow.camera.top = shadowExtent;
@@ -366,7 +357,7 @@ export function createArena(scene: THREE.Scene, id: ArenaId): ArenaBuild {
     paintables,
     walkables: ctx.walkables,
     spawns,
-    worldSize: isBlank ? 72 : 44,
+    worldSize: 72,
     teamSize: isBlank ? 10 : 4
   };
 }

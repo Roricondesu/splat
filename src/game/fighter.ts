@@ -27,6 +27,9 @@ export interface Fighter {
   previousGrounded: boolean;
   swim: boolean;
   swimLevel: number;
+  surfaceClimbing: boolean;
+  surfaceNormal: THREE.Vector3;
+  surfacePoint: THREE.Vector3;
   aiCommitUntil: number;
   aiLastProductivePaintAt: number;
   aiNextPaintShotAt: number;
@@ -570,6 +573,9 @@ export function createFighter(
     previousGrounded: true,
     swim: false,
     swimLevel: 0,
+    surfaceClimbing: false,
+    surfaceNormal: new THREE.Vector3(0, 1, 0),
+    surfacePoint: new THREE.Vector3(),
     aiCommitUntil: 0,
     aiLastProductivePaintAt: 0,
     aiNextPaintShotAt: Math.random() * 0.3,
@@ -599,6 +605,9 @@ export function resetFighterPose(fighter: Fighter) {
   fighter.group.rotation.z = 0;
   fighter.swim = false;
   fighter.swimLevel = 0;
+  fighter.surfaceClimbing = false;
+  fighter.surfaceNormal.set(0, 1, 0);
+  fighter.surfacePoint.copy(fighter.group.position);
   rig.visual.position.set(0, 0, 0);
   rig.visual.rotation.set(0, 0, 0);
   rig.visual.scale.set(BASE_VISUAL_SCALE_XZ, BASE_VISUAL_SCALE_Y, BASE_VISUAL_SCALE_XZ);

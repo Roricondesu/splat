@@ -11,7 +11,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   page.on('console', m => { if (m.type() === 'error') errors.push('console: ' + m.text()); });
   page.on('pageerror', e => errors.push('pageerror: ' + e.message));
-  await page.goto('http://localhost:4174?testMatchSeconds=4', { waitUntil: 'networkidle' });
+  await page.goto('http://localhost:4174?testMatchSeconds=10', { waitUntil: 'networkidle' });
   await page.waitForSelector('[data-action="start"]');
   const arenaCards = await page.locator('[data-arena]').count();
   if (arenaCards < 3) throw new Error(`Expected at least 3 arenas, found ${arenaCards}`);
@@ -136,7 +136,7 @@ try {
   const selectedArena = await page.evaluate(() => JSON.parse(localStorage.getItem('neon-turf-save') || '{}').arena);
   await page.click('[data-action="spectate"]');
   await page.waitForSelector('#game-canvas');
-  await page.waitForTimeout(3500);
+  await page.waitForTimeout(6500);
   const spectatorState = await page.evaluate(() => window.__neonDebug?.state());
   const spectatorBadgeVisible = await page.locator('.spectator-badge,.score-chip.spectator-only').count() === 0;
   const spectatorControls = await page.locator('.mobile-controls,[data-stick],[data-fire],[data-submerge],[data-dash],[data-jump]').count();

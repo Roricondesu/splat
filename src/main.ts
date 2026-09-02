@@ -41,6 +41,7 @@ function beginGame(spectating = false) {
         finishMatch: () => game?.debugFinishMatch(),
         firePlayer: () => game?.debugFirePlayer(),
         throwWaterBomb: () => game?.debugThrowWaterBomb(),
+        prepareWallClimb: () => game?.debugPrepareWallClimb(),
         weaponSpecs: () => WEAPONS.map(weapon => ({ ...weapon }))
       }
     });
