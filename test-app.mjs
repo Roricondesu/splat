@@ -125,7 +125,7 @@ try {
   const pauseVisible = await page.locator('.pause-modal').isVisible();
   await page.click('[data-resume]');
   await page.waitForSelector('.pause-modal', { state: 'detached' });
-  await page.waitForSelector('.result-screen', { timeout: 10000 });
+  await page.waitForSelector('.result-screen', { timeout: 18000 });
   const resultVisible = await page.locator('.result-screen').isVisible();
   await page.screenshot({ path: `${out}/result-desktop.png`, fullPage: true });
   await page.click('[data-action="home"]');

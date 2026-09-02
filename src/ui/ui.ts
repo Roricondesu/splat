@@ -1,4 +1,4 @@
-import { ARENAS, ArenaId, CustomRules, DEFAULT_SAVE, Difficulty, HAIRSTYLES, OutfitSpec, OUTFITS, SaveData, TEAM_COLORS, TEAM_ORDER, WEAPONS, WeaponId } from '../game/config';
+import { ARENAS, ArenaId, CustomRules, DEFAULT_SAVE, Difficulty, HAIRSTYLES, OutfitSpec, OUTFITS, SaveData, TEAM_COLORS, TEAM_ORDER, Team, WEAPONS, WeaponId } from '../game/config';
 import { GameStats } from '../game/game';
 
 export type Screen = 'loading' | 'home' | 'loadout' | 'settings' | 'game' | 'result';
@@ -18,6 +18,8 @@ export class GameUI {
   private toastTimer?: number;
   private stats?: GameStats;
   private previousHealth = 100;
+  private endingReveal = false;
+  private endingRevealTimer?: number;
   private hitmarkerTimer?: number;
   private spectating = false;
 
@@ -300,8 +302,13 @@ export class GameUI {
 
   updateStats(stats: GameStats) {
     this.stats = stats;
+    if (stats.time <= 0 && !this.endingReveal) {
+      this.endingReveal = true;
+      this.root.querySelector('.game-screen')?.classList.add('ending-reveal');
+      this.root.querySelector('.hud-top')?.classList.add('reveal-count');
+    }
     const q = <T extends Element = HTMLElement>(s: string) => this.root.querySelector<T>(s);
-    this.updateDigits(q<SVGSVGElement>('[data-time]'), `${Math.floor(stats.time / 60)}:${Math.floor(stats.time % 60).toString().padStart(2, '0')}`);
+    this.updateDigits(q<SVGSVGElement>('[data-time]'), this.endingReveal ? '0:00' : `${Math.floor(stats.time / 60)}:${Math.floor(stats.time % 60).toString().padStart(2, '0')}`);
     q<HTMLElement>('[data-meter-cyan]')?.style.setProperty('width', `${stats.cyan}%`);
     Object.entries(stats.teams ?? {}).forEach(([team, percent]) => q<HTMLElement>(`[data-team-meter="${team}"]`)?.style.setProperty('width', `${percent}%`));
     this.updateDigits(q<SVGSVGElement>('[data-ammo-text]'), `${Math.round(stats.ammo)}`);
@@ -334,20 +341,17 @@ export class GameUI {
     }, eliminated ? 650 : 320);
   }
 
-  showResult(stats: GameStats & { won: boolean; kills: number }) {
+  showResult(stats: GameStats & { won: boolean; kills: number; ranking?: Team[] }) {
     this.screen = 'result';
     this.save.matches++; if (stats.won) this.save.wins++; const reward = 180 + Math.round(stats.score * 0.2); this.save.coins += reward; this.persist();
-    const resultTeams = this.currentTeams();
-    const resultRows = resultTeams.map(team => `<div class="result-team team-${team}" style="--team-color:${TEAM_COLORS[team].css}"><span>${TEAM_COLORS[team].name}队</span><b>${(stats.teams?.[team] ?? (team === 'cyan' ? stats.cyan : stats.orange)).toFixed(1)}<small>%</small></b><i style="width:${stats.teams?.[team] ?? (team === 'cyan' ? stats.cyan : stats.orange)}%"></i></div>`).join('');
+    const teams = this.currentTeams();
+    const rankOrder = stats.ranking?.length ? stats.ranking : [...teams].sort((a, b) => (stats.teams?.[b] ?? 0) - (stats.teams?.[a] ?? 0));
+    const resultRows = rankOrder.map((team, index) => `<div class="result-team team-${team}" style="--team-color:${TEAM_COLORS[team].css}"><strong class="rank-number">${index + 1}</strong><span>${TEAM_COLORS[team].name}队</span><b>${(stats.teams?.[team] ?? (team === 'cyan' ? stats.cyan : stats.orange)).toFixed(1)}<small>%</small></b><i style="width:${stats.teams?.[team] ?? (team === 'cyan' ? stats.cyan : stats.orange)}%"></i></div>`).join('');
     this.root.innerHTML = `<div class="screen result-screen ${stats.won ? 'won' : 'lost'}">
       <div class="result-rays"></div><div class="result-stamp">${stats.won ? 'TURF SECURED' : 'NEXT ROUND'}</div>
-      <header><small>MATCH COMPLETE</small><h1>${stats.won ? '漂亮拿下！' : '差一点点！'}</h1><p>${stats.won ? '整条街区都留下了你的颜色。' : '换把武器，再把地盘抢回来。'}</p></header>
-      <div class="result-board glass ${resultTeams.length > 2 ? 'multi-result' : ''}">${resultRows}</div>
-      <div class="performance-grid">
-        <div><small>占地贡献</small><b>${Math.round(stats.score)}</b><em>PAINT PTS</em></div>
-        <div><small>击退数</small><b>${stats.kills}</b><em>SPLATS</em></div>
-        <div><small>本局奖励</small><b>+${reward}</b><em>NEON COINS</em></div>
-      </div>
+      <header><small>MATCH COMPLETE</small><h1>${stats.won ? '漂亮拿下！' : '差一点点！'}</h1><p>全场上帝视角回放完成，最终排名已公布。</p></header>
+      <div class="result-board glass ${teams.length > 2 ? 'multi-result' : ''}">${resultRows}</div>
+      <div class="performance-grid"><div><small>占地贡献</small><b>${Math.round(stats.score)}</b><em>PAINT PTS</em></div><div><small>击退数</small><b>${stats.kills}</b><em>SPLATS</em></div><div><small>本局奖励</small><b>+${reward}</b><em>NEON COINS</em></div></div>
       <div class="result-actions"><button class="primary-btn huge" data-action="restart"><span>再来一局</span><small>REMATCH</small><b>↻</b></button><button class="secondary-btn" data-action="home">返回大厅</button></div>
     </div>`;
     this.bindCommon();
@@ -425,7 +429,7 @@ export class GameUI {
   }
 
   private timerGlyph(): string {
-    return `<svg class="timer-glyph" viewBox="0 0 36 16" aria-hidden="true"><path d="M13 3 H23 M18 3 V6" stroke="#8ba1ae" stroke-width="2.5" stroke-linecap="round"/><circle cx="18" cy="10" r="5" fill="none" stroke="#8ba1ae" stroke-width="2.3"/><path d="M18 10 L21 8" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>`;
+    return '';
   }
 
   private blasterIcon(color: string): string {
@@ -496,7 +500,8 @@ export class GameUI {
     this.root.querySelector<HTMLElement>('[data-action="settings"]')?.addEventListener('click', () => this.showSettings());
   }
 
-  private currentTeams() {
+  private currentTeams
+() {
     if (this.save.arena === 'custom') return TEAM_ORDER.slice(0, this.save.customMode.teamCount);
     return ['cyan', 'orange'] as const;
   }

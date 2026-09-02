@@ -87,6 +87,8 @@ export class NeonGame {
   private player!: Fighter;
   private running = false;
   private paused = false;
+  private ending = false;
+  private readonly endingCoverage: Partial<Record<Team, number>> = {};
   private lastTime = 0;
   private elapsed = 0;
   private matchTime = this.getMatchDuration();
@@ -161,7 +163,8 @@ export class NeonGame {
 
   start() {
     this.paint.reset();
-    this.elapsed = 0; this.matchTime = this.getMatchDuration(); this.kills = 0;
+    this.elapsed = 0; this.matchTime = this.getMatchDuration(); this.kills = 0; this.ending = false;
+    this.arena.teams.forEach(team => { this.endingCoverage[team] = 0; });
     this.playerShotCount = 0; this.playerLastShotPellets = 0;
     this.projectiles.forEach(p => { this.scene.remove(p.mesh); p.tail.forEach(t => this.scene.remove(t)); }); this.projectiles = [];
     this.waterBombs.forEach(bomb => { this.scene.remove(bomb.mesh); bomb.mesh.geometry.dispose(); (bomb.mesh.material as THREE.Material).dispose(); }); this.waterBombs = [];
@@ -208,6 +211,9 @@ export class NeonGame {
       moveX: this.input.state.moveX,
       moveY: this.input.state.moveY,
       spectatorMode: this.spectatorMode,
+      ending: this.ending,
+      endingElapsed: this.endingElapsed,
+      endingCoverageReady: this.endingCoverageReady,
       cameraY: this.camera.position.y,
       spectatorPitch: this.spectatorPitch,
       fighterCount: this.fighters.length,
@@ -372,6 +378,7 @@ export class NeonGame {
 
   private update(dt: number, time: number) {
     this.elapsed += dt;
+    if (this.ending) { this.updateEnding(dt); return; }
     this.matchTime -= dt;
     if (this.matchTime <= 0) { this.finish(); return; }
     this.input.update();
@@ -1332,23 +1339,86 @@ export class NeonGame {
 
   private emitStats() {
     const coverage = this.paint.coverage();
+    const endingTeams = this.ending ? this.endingCoverage : Object.fromEntries(this.arena.teams.map(team => [team, coverage.teams[team]?.percent ?? 0]));
+    const cyanPercent = endingTeams.cyan ?? coverage.cyanPercent;
+    const orangePercent = endingTeams.orange ?? coverage.orangePercent;
     this.callbacks.onStats({
-      time: Math.max(0, this.matchTime), cyan: coverage.cyanPercent, orange: coverage.orangePercent,
-      teams: Object.fromEntries(this.arena.teams.map(team => [team, coverage.teams[team]?.percent ?? 0])),
+      time: Math.max(0, this.matchTime), cyan: cyanPercent, orange: orangePercent,
+      teams: endingTeams,
       health: this.player.health, ammo: this.player.ammo, score: this.spectatorMode ? 0 : this.player.score, weapon: this.player.weapon,
       alive: this.spectatorMode ? true : this.player.alive, respawn: this.spectatorMode || this.player.alive ? 0 : Math.max(0, this.player.respawnAt - performance.now() / 1000)
     });
   }
 
-  private finish() {
-    this.running = false;
-    const c = this.paint.coverage();
-    const stats: GameStats & { won: boolean; kills: number } = {
-      time: 0, cyan: c.cyanPercent, orange: c.orangePercent, teams: Object.fromEntries(this.arena.teams.map(team => [team, c.teams[team]?.percent ?? 0])), health: this.player.health, ammo: this.player.ammo,
-      score: this.player.score, weapon: this.player.weapon, alive: this.player.alive, respawn: 0,
-      won: this.save.customMode.rules.turfWin ? (this.arena.teams[0] ? (c.teams[this.arena.teams[0]]?.percent ?? 0) >= Math.max(...this.arena.teams.slice(1).map(team => c.teams[team]?.percent ?? 0)) : true) : this.player.health > 0, kills: this.kills
+  private beginEnding() {
+    this.ending = true;
+    this.running = true;
+    this.spectatorMode = true;
+    this.player.isPlayer = false;
+    this.player.aiMode = 'paint';
+    this.player.thinkCooldown = 9999;
+    this.spectatorYaw = 0.65;
+    this.spectatorPitch = 1.08;
+    this.spectatorDistance = Math.max(32, this.arena.worldSize * 0.58);
+    this.spectatorInitialized = false;
+    this.paused = false;
+    this.endingStartedAt = performance.now() / 1000;
+    this.lastStatsAt = 0;
+    this.endingAnnounced = false;
+    this.endingElapsed = 0;
+    this.endingCoverageReady = false;
+    this.emitStats();
+  }
+
+  private endingStartedAt = 0;
+  private endingElapsed = 0;
+  private endingAnnounced = false;
+  private endingCoverageReady = false;
+
+  private updateEnding(dt: number) {
+    this.endingElapsed += dt;
+    this.updateCamera(dt);
+    const liveCoverage = this.paint.coverage();
+    const progress = THREE.MathUtils.clamp((this.endingElapsed - 1.2) / 3.8, 0, 1);
+    for (const team of this.arena.teams) {
+      const target = liveCoverage.teams[team]?.percent ?? 0;
+      this.endingCoverage[team] = target * progress;
+    }
+    if (this.endingElapsed - this.lastStatsAt > 0.08) {
+      this.lastStatsAt = this.endingElapsed;
+      this.emitStats();
+    }
+    if (progress >= 1 && !this.endingCoverageReady) {
+      this.endingCoverageReady = true;
+      this.announceFinalRanking();
+    }
+  }
+
+  private announceFinalRanking() {
+    if (this.endingAnnounced) return;
+    this.endingAnnounced = true;
+    const ranked = [...this.arena.teams].sort((a, b) => (this.endingCoverage[b] ?? 0) - (this.endingCoverage[a] ?? 0));
+    const finalCoverage = Object.fromEntries(this.arena.teams.map(team => [team, this.endingCoverage[team] ?? 0]));
+    const stats: GameStats & { won: boolean; kills: number; ranking: Team[] } = {
+      time: 0,
+      cyan: finalCoverage.cyan ?? 0,
+      orange: finalCoverage.orange ?? 0,
+      teams: finalCoverage,
+      health: this.player.health,
+      ammo: this.player.ammo,
+      score: this.player.score,
+      weapon: this.player.weapon,
+      alive: this.player.alive,
+      respawn: 0,
+      won: ranked[0] === this.player.team,
+      kills: this.kills,
+      ranking: ranked
     };
     this.callbacks.onEnd(stats);
+  }
+
+  private finish() {
+    if (!this.ending) this.beginEnding();
   }
 
   private playTone(freq: number, duration: number, volume: number) {
