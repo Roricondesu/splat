@@ -1,6 +1,6 @@
 import { ARENAS, ArenaId, CustomRules, DEFAULT_SAVE, Difficulty, HAIRSTYLES, OutfitSpec, OUTFITS, SaveData, TEAM_COLORS, TEAM_ORDER, Team, WEAPONS, WeaponId } from '../game/config';
 import { GameStats } from '../game/game';
-import { LiveCommandProcessor, LiveProfile, createDemoMessage } from '../live/live';
+import { LiveCommandProcessor, LiveProfile, LiveRoomState, createDemoMessage } from '../live/live';
 
 export type Screen = 'loading' | 'home' | 'loadout' | 'settings' | 'game' | 'result' | 'live';
 
@@ -10,7 +10,7 @@ export interface UIActions {
   restartGame: () => void;
   quitGame: () => void;
   pauseGame: (paused: boolean) => void;
-  liveStart: (profiles: LiveProfile[]) => void;
+  liveStart: (profiles: LiveProfile[], room: LiveRoomState, live: LiveCommandProcessor) => void;
   saveChanged: (save: SaveData) => void;
 }
 
@@ -20,6 +20,9 @@ export class GameUI {
   private toastTimer?: number;
   private stats?: GameStats;
   private previousHealth = 100;
+  private liveMode = false;
+  private liveProcessor?: LiveCommandProcessor;
+  private liveEventUnsubscribe?: () => boolean;
   private endingReveal = false;
   private endingRevealTimer?: number;
   private hitmarkerTimer?: number;
@@ -142,7 +145,7 @@ export class GameUI {
     this.root.querySelectorAll<HTMLElement>('[data-live-quick]').forEach(button => button.onclick = () => send(button.dataset.liveQuick!));
     this.root.querySelector<HTMLElement>('[data-live-connect]')!.onclick = () => { const url = this.root.querySelector<HTMLInputElement>('[data-live-url]')!.value.trim(); if (url) this.live.connectWebSocket(url); };
     this.root.querySelector<HTMLElement>('[data-live-disconnect]')!.onclick = () => this.live.disconnect();
-    this.root.querySelector<HTMLElement>('[data-live-start]')!.onclick = () => { send('开始直播'); this.actions.liveStart(this.live.state.profiles.map(profile => ({ ...profile, ownedWeapons: [...profile.ownedWeapons], ownedOutfits: [...profile.ownedOutfits], ownedHairstyles: [...profile.ownedHairstyles] }))); };
+    this.root.querySelector<HTMLElement>('[data-live-start]')!.onclick = () => { send('开始直播'); this.actions.liveStart(this.live.state.profiles.map(profile => ({ ...profile, ownedWeapons: [...profile.ownedWeapons], ownedOutfits: [...profile.ownedOutfits], ownedHairstyles: [...profile.ownedHairstyles] })), this.live.state, this.live); };
     this.bindCommon();
   }
 
@@ -297,24 +300,27 @@ export class GameUI {
     modal.querySelector<HTMLElement>('[data-quit]')?.addEventListener('click', () => { close(); this.actions.quitGame(); });
   }
 
-  showGameShell(spectating = false) {
+  showGameShell(spectating = false, liveMode = false, liveProcessor?: LiveCommandProcessor) {
     this.screen = 'game';
+    this.liveMode = liveMode;
+    this.liveProcessor = liveProcessor;
     this.spectating = spectating;
     const weapon = WEAPONS.find(w => w.id === this.save.weapon)!;
-    const activeTeams = this.currentTeams();
+    const activeTeams = liveMode ? TEAM_ORDER.slice(0, 4) : this.currentTeams();
     const teamHud = activeTeams.map(team => `<div class="team-score team-${team}" aria-label="${TEAM_COLORS[team].name}队">${this.teamMark(TEAM_COLORS[team].css)}</div>`).join('');
     const teamMeters = activeTeams.map(team => `<i data-team-meter="${team}" style="background:${TEAM_COLORS[team].css};width:${100 / activeTeams.length}%"></i>`).join('');
     this.root.innerHTML = `
-      <div class="screen game-screen">
+      <div class="screen game-screen ${liveMode ? 'live-game-screen' : ''}">
         <canvas id="game-canvas"></canvas>
         <div class="game-vignette"></div>
         <header class="hud-top" aria-label="对战状态">
           ${teamHud}
-          <div class="timer" aria-label="剩余时间">${this.timerGlyph()}${this.svgDigits('2:30', { fill: '#ffffff', className: 'hud-digits time-digits', dataAttr: 'data-time' })}</div>
+          <div class="timer" aria-label="剩余时间">${liveMode ? `<span class="live-hud-room">LIVE · ${liveProcessor?.state.roomCode ?? 'ROOM'}</span>` : ''}${this.timerGlyph()}${this.svgDigits(liveMode ? '2:00' : '2:30', { fill: '#ffffff', className: 'hud-digits time-digits', dataAttr: 'data-time' })}</div>
         </header>
         <div class="turf-meter multi-team-meter">${teamMeters}</div>
         <div class="crosshair"><i></i><i></i><i></i><i></i><b data-hitmarker></b></div>
         <div class="damage-vignette" data-damage-vignette></div>
+        ${liveMode ? `<aside class="live-hud-panel"><div class="live-hud-line"><span class="live-dot"></span><b>LIVE</b><em data-live-hud-viewers>${liveProcessor?.state.viewers ?? 1}人</em></div><div class="live-hud-feed" data-live-hud-feed></div><div class="live-hud-gifts">礼物强化 <b data-live-hud-power>0</b></div><div class="live-hud-compose"><input data-live-hud-command placeholder="发送弹幕"/><button data-live-hud-send>发送</button></div><div class="live-hud-connect"><input data-live-hud-url placeholder="弹幕 WebSocket"/><button data-live-hud-connect>接入</button></div></aside>` : ''}
         <div class="hud-bottom-left">
           <div class="weapon-hud" aria-label="当前武器"><span class="weapon-glyph">${this.blasterIcon(weapon.color)}</span></div>
           <div class="ammo-ring" aria-label="颜料余量"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="42"></circle><circle data-ammo-ring cx="50" cy="50" r="42"></circle></svg>${this.svgIcon('#b8ff3d', 31)}${this.svgDigits('100', { fill: '#b8ff3d', className: 'hud-digits ammo-digits', dataAttr: 'data-ammo-text' })}</div>
@@ -332,6 +338,27 @@ export class GameUI {
         </div>`}
       </div>`;
     this.root.querySelector<HTMLElement>('[data-pause]')!.onclick = () => this.showPause();
+    if (liveMode && liveProcessor) {
+      this.liveEventUnsubscribe = liveProcessor.subscribeEvents(event => {
+        const viewer = this.root.querySelector<HTMLElement>('[data-live-hud-viewers]');
+        if (viewer) viewer.textContent = `${liveProcessor.state.viewers}人`;
+        const power = this.root.querySelector<HTMLElement>('[data-live-hud-power]');
+        if (power && event.type === 'gift') power.textContent = String(event.profile.giftPower);
+        const feed = this.root.querySelector<HTMLElement>('[data-live-hud-feed]');
+        if (feed) {
+          const label = event.type === 'gift' ? `礼物强化 +${event.power}` : event.type === 'join' ? `加入${TEAM_COLORS[event.profile.team ?? 'cyan'].name}队` : event.type === 'tactic' ? event.tactic : '装备同步';
+          const line = document.createElement('div'); line.className = 'live-hud-feed-line'; line.textContent = `${event.profile.userName} · ${label}`; feed.prepend(line); while (feed.children.length > 4) feed.lastElementChild?.remove();
+        }
+      });
+      const commandInput = this.root.querySelector<HTMLInputElement>('[data-live-hud-command]');
+      const submitCommand = () => { if (commandInput?.value.trim()) { liveProcessor.receive(createDemoMessage(commandInput.value)); commandInput.value = ''; } };
+      commandInput?.addEventListener('keydown', event => { if (event.key === 'Enter') submitCommand(); });
+      this.root.querySelector<HTMLElement>('[data-live-hud-send]')?.addEventListener('click', submitCommand);
+      this.root.querySelector<HTMLElement>('[data-live-hud-connect]')?.addEventListener('click', () => {
+        const url = this.root.querySelector<HTMLInputElement>('[data-live-hud-url]')?.value.trim();
+        if (url) liveProcessor.connectWebSocket(url);
+      });
+    }
     return this.root.querySelector<HTMLCanvasElement>('#game-canvas')!;
   }
 
@@ -349,6 +376,11 @@ export class GameUI {
 
   updateStats(stats: GameStats) {
     this.stats = stats;
+    if (this.liveMode && this.liveProcessor) {
+      const current = this.liveProcessor.state;
+      const viewer = this.root.querySelector<HTMLElement>('[data-live-hud-viewers]');
+      if (viewer) viewer.textContent = `${current.viewers}人`;
+    }
     if (stats.time <= 0 && !this.endingReveal) {
       this.endingReveal = true;
       this.root.querySelector('.game-screen')?.classList.add('ending-reveal');
@@ -544,8 +576,13 @@ export class GameUI {
     this.root.querySelector<HTMLElement>('[data-action="home"]')?.addEventListener('click', this.showHome.bind(this));
     this.root.querySelector<HTMLElement>('[data-action="back"]')?.addEventListener('click', this.showHome.bind(this));
     this.root.querySelector<HTMLElement>('[data-action="loadout"]')?.addEventListener('click', this.showLoadout.bind(this));
-    this.root.querySelector<HTMLElement>('[data-action="live"]')?.addEventListener('click', this.showLive.bind(this));
+    this.root.querySelector<HTMLElement>('[data-action="live"]')?.addEventListener('click', () => this.startLiveDirect());
     this.root.querySelector<HTMLElement>('[data-action="settings"]')?.addEventListener('click', () => this.showSettings());
+  }
+
+  private startLiveDirect() {
+    this.live.launch();
+    this.actions.liveStart([], this.live.state, this.live);
   }
 
   private currentTeams

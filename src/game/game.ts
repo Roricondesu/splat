@@ -5,7 +5,11 @@ import { Difficulty, HAIRSTYLES, HairstyleId, OUTFITS, SaveData, TEAM_COLORS, TE
 import { animateFighter, createFighter, Fighter, resetFighterPose } from './fighter';
 import { InputController } from './input';
 import { PaintField } from './paintField';
-import type { LiveProfile } from '../live/live';
+import type { LiveEvent, LiveProfile } from '../live/live';
+
+export interface LiveEventSource {
+  subscribeEvents(listener: (event: LiveEvent) => void): () => boolean;
+}
 
 interface Projectile {
   mesh: THREE.Mesh;
@@ -91,6 +95,11 @@ export class NeonGame {
   private ending = false;
   private readonly endingCoverage: Partial<Record<Team, number>> = {};
   private lastTime = 0;
+  private readonly liveMode: boolean;
+  private readonly liveInitialProfiles: LiveProfile[];
+  private liveProfiles: LiveProfile[];
+  private liveFeed: Array<{ userName: string; content: string; result: string; tone: 'ok' | 'warn' | 'info' }> = [];
+  private liveGiftPower = 0;
   private elapsed = 0;
   private matchTime = this.getMatchDuration();
   private cameraYaw = Math.PI;
@@ -119,7 +128,11 @@ export class NeonGame {
   private playerShotCount = 0;
   private playerLastShotPellets = 0;
 
-  constructor(private canvas: HTMLCanvasElement, private save: SaveData, private callbacks: GameCallbacks, private liveProfiles: LiveProfile[] = []) {
+  constructor(private canvas: HTMLCanvasElement, private save: SaveData, private callbacks: GameCallbacks, liveProfiles: LiveProfile[] = [], private liveRoom?: { roomCode: string; connected: boolean; viewers: number; profiles: LiveProfile[] }, private liveEvents?: LiveEventSource) {
+    this.liveMode = Boolean(liveRoom);
+
+    this.liveInitialProfiles = liveProfiles;
+    this.liveProfiles = liveProfiles.map(profile => ({ ...profile }));
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: save.quality !== 'low', powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, save.quality === 'high' ? 1.6 : save.quality === 'medium' ? 1.25 : 1));
     this.renderer.shadowMap.enabled = save.quality !== 'low';
@@ -128,7 +141,7 @@ export class NeonGame {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.input = new InputController(canvas, save.joystickMode);
-    this.arena = createArena(this.scene, save.arena, save.customMode);
+    this.arena = createArena(this.scene, this.liveMode ? 'custom' : save.arena, this.liveMode ? { ...save.customMode, worldSize: 72, teamSize: 1, teamCount: 4, blocks: [] } : save.customMode);
     this.obstacles = this.arena.obstacles;
     this.paintables = this.arena.paintables;
     this.walkables = this.arena.walkables;
@@ -147,11 +160,52 @@ export class NeonGame {
     this.tailMaterials = Object.fromEntries(TEAM_ORDER.map(team => [team, new THREE.MeshBasicMaterial({ color: TEAM_COLORS[team].main, transparent: true, opacity: 0.34, depthWrite: false })])) as Record<Team, THREE.MeshBasicMaterial>;
     this.difficulty = save.difficulty;
     this.createTeams();
+    this.liveEvents?.subscribeEvents(event => this.handleLiveEvent(event));
     this.resize();
     window.addEventListener('resize', this.resize);
   }
 
   bindMobileControls(root: HTMLElement) { this.input.bindMobileControls(root); }
+
+  private handleLiveEvent(event: LiveEvent) {
+    if (!this.liveMode) return;
+    const profileIndex = this.liveProfiles.findIndex(profile => profile.userId === event.profile.userId);
+    if (profileIndex >= 0) this.liveProfiles[profileIndex] = { ...event.profile };
+    else if (event.type === 'join') {
+      this.liveProfiles.push({ ...event.profile });
+      this.addLiveViewer(event.profile);
+    }
+    if (event.type === 'gift') {
+      this.liveGiftPower += event.power;
+      const fighter = this.fighters.find(item => item.liveUserId === event.profile.userId);
+      if (fighter) fighter.livePower += event.power;
+      this.liveFeed.unshift({ userName: event.profile.userName, content: '礼物', result: `强化 +${event.power}`, tone: 'ok' });
+      this.liveFeed.splice(10);
+      return;
+    }
+    const fighter = this.fighters.find(item => item.liveUserId === event.profile.userId);
+    if (!fighter) return;
+    if (event.type === 'profile') {
+      const weapon = WEAPONS.find(item => item.id === event.profile.weapon);
+      if (weapon) fighter.weapon = weapon;
+    }
+  }
+
+  private addLiveViewer(profile: LiveProfile) {
+    const team = profile.team ?? 'cyan';
+    const anchor = this.arena.spawns[team]?.[0]?.clone() ?? new THREE.Vector3();
+    const offset = this.fighters.filter(fighter => fighter.team === team).length * 0.8;
+    anchor.x = THREE.MathUtils.clamp(anchor.x + offset, -this.arena.worldSize * 0.5 + 2, this.arena.worldSize * 0.5 - 2);
+    anchor.z = THREE.MathUtils.clamp(anchor.z + offset * 0.35, -this.arena.worldSize * 0.5 + 2, this.arena.worldSize * 0.5 - 2);
+    const weapon = WEAPONS.find(item => item.id === profile.weapon) ?? WEAPONS[0];
+    const outfit = OUTFITS.find(item => item.id === profile.outfit) ?? OUTFITS[0];
+    const hair = (profile.hairstyle as HairstyleId | undefined) ?? HAIRSTYLES[0].id;
+    const fighter = createFighter(this.fighters.length, team, false, weapon, anchor, outfit, hair, profile.userName, profile.userId);
+    fighter.livePower = profile.giftPower;
+    this.fighters.push(fighter);
+    this.scene.add(fighter.group);
+    this.paint.paint(anchor.x, anchor.z, 1.8, team, 1, 'spawn');
+  }
 
   setSpectatorMode(enabled: boolean) {
     this.spectatorMode = enabled;
@@ -208,6 +262,8 @@ export class NeonGame {
       submergeHeld: this.input.state.submerge,
       playerSubmerged: this.player.swim,
       playerSurfaceClimbing: this.player.surfaceClimbing,
+      playerDisplayName: this.player.group.userData.displayName,
+      playerLivePower: this.player.livePower,
       playerSurfaceNormal: { x: this.player.surfaceNormal.x, y: this.player.surfaceNormal.y, z: this.player.surfaceNormal.z },
       moveX: this.input.state.moveX,
       moveY: this.input.state.moveY,
@@ -226,6 +282,12 @@ export class NeonGame {
       coverage: this.paint.coverage(),
       teams: this.arena.teams,
       rules: this.arena.id === 'custom' ? this.save.customMode.rules : undefined,
+      liveMode: this.liveMode,
+      liveRoom: this.liveRoom ? { roomCode: this.liveRoom.roomCode, connected: this.liveRoom.connected, viewers: this.liveRoom.viewers } : undefined,
+      liveFeed: this.liveFeed,
+      liveGiftPower: this.liveGiftPower,
+      liveViewerCount: this.liveProfiles.length,
+      liveProfiles: this.liveProfiles.map(profile => ({ userId: profile.userId, userName: profile.userName, team: profile.team, giftPower: profile.giftPower })),
       aiModes: this.fighters.filter(f => !f.isPlayer).reduce((modes, fighter) => {
         modes[fighter.aiMode]++;
         return modes;
@@ -352,20 +414,21 @@ export class NeonGame {
   private createTeams() {
     const weapon = WEAPONS.find(w => w.id === this.save.weapon) ?? WEAPONS[0];
     const outfit = OUTFITS.find(o => o.id === this.save.outfit) ?? OUTFITS[0];
-    const teamSize = this.arena.teamSize;
-    const teams = this.arena.teams.length ? this.arena.teams : ['cyan', 'orange'] as Team[];
+    const teamSize = this.liveMode ? 1 : this.arena.teamSize;
+    const teams = this.liveMode ? TEAM_ORDER.slice(0, 4) : this.arena.teams.length ? this.arena.teams : ['cyan', 'orange'] as Team[];
     let fighterId = 0;
     for (let teamIndex = 0; teamIndex < teams.length; teamIndex++) {
       const team = teams[teamIndex];
       const spawns = this.arena.spawns[team] ?? [];
       for (let member = 0; member < teamSize; member++) {
         const spawn = spawns[member] ?? new THREE.Vector3(Math.cos(teamIndex / teams.length * Math.PI * 2) * 24, 0, Math.sin(teamIndex / teams.length * Math.PI * 2) * 24);
-        const liveProfile = this.liveProfiles.find(profile => profile.team === team && this.liveProfiles.filter(item => item.team === team).indexOf(profile) === member);
+        const liveProfile = this.liveMode ? this.liveInitialProfiles.find(profile => profile.team === team) : undefined;
         const isPlayer = teamIndex === 0 && member === 0;
         const liveWeapon = liveProfile ? WEAPONS.find(item => item.id === liveProfile.weapon) ?? weapon : weapon;
         const liveOutfit = liveProfile ? OUTFITS.find(item => item.id === liveProfile.outfit) ?? outfit : outfit;
         const liveHair: HairstyleId = (liveProfile?.hairstyle as HairstyleId | undefined) ?? this.save.hairstyle;
-        const fighter = createFighter(fighterId++, team, isPlayer, liveProfile ? liveWeapon : isPlayer ? weapon : WEAPONS[(fighterId + 1) % WEAPONS.length], spawn, liveProfile ? liveOutfit : isPlayer ? outfit : OUTFITS[fighterId % OUTFITS.length], liveProfile ? liveHair : isPlayer ? this.save.hairstyle : HAIRSTYLES[fighterId % HAIRSTYLES.length].id);
+        const fighter = createFighter(fighterId++, team, isPlayer, liveProfile ? liveWeapon : isPlayer ? weapon : WEAPONS[(fighterId + 1) % WEAPONS.length], spawn, liveProfile ? liveOutfit : isPlayer ? outfit : OUTFITS[fighterId % OUTFITS.length], liveProfile ? liveHair : isPlayer ? this.save.hairstyle : HAIRSTYLES[fighterId % HAIRSTYLES.length].id, liveProfile?.userName, liveProfile?.userId);
+        if (liveProfile) fighter.livePower = liveProfile.giftPower;
         this.fighters.push(fighter); this.scene.add(fighter.group);
         if (isPlayer) this.player = fighter;
       }
@@ -534,7 +597,8 @@ export class NeonGame {
 
       const travelAngle = blockedAhead && !clearsAtJumpHeight ? probeAngle : heading;
       const baseSpeed = f.aiMode === 'retreat' ? 7.7 : f.aiMode === 'paint' ? 6.15 : 5.35 + (this.difficulty === 'expert' ? 0.75 : 0);
-      const speed = (f.swim ? Math.max(10, baseSpeed * 1.45) : baseSpeed) * (f.weapon.speedScale ?? 1);
+      const giftBoost = this.liveMode ? Math.min(0.35, f.livePower * 0.004) : 0;
+      const speed = (f.swim ? Math.max(10, baseSpeed * (1.45 + giftBoost)) : baseSpeed * (1 + giftBoost)) * (f.weapon.speedScale ?? 1);
       this.scratchB.set(Math.sin(travelAngle), 0, Math.cos(travelAngle)).multiplyScalar(speed);
       f.velocity.lerp(this.scratchB, 1 - Math.pow(0.01, dt));
       f.group.rotation.y = Math.atan2(f.velocity.x, f.velocity.z);
@@ -1444,7 +1508,7 @@ export class NeonGame {
 
   private getMatchDuration() {
     const requested = Number(new URLSearchParams(location.search).get('testMatchSeconds'));
-    const base = this.arena?.id === 'custom' ? this.save.customMode.rules.matchSeconds : 150;
+    const base = this.liveMode ? 120 : this.arena?.id === 'custom' ? this.save.customMode.rules.matchSeconds : 150;
     return location.hostname === 'localhost' && Number.isFinite(requested) && requested > 0
       ? THREE.MathUtils.clamp(requested, 2, 300)
       : base;

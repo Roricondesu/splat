@@ -14,6 +14,8 @@ export interface LiveProfile {
   userId: string;
   userName: string;
   coins: number;
+  giftPower: number;
+  gifts: number;
   rank: string;
   rating: number;
   team?: Team;
@@ -25,6 +27,12 @@ export interface LiveProfile {
   ownedHairstyles: string[];
   ready: boolean;
 }
+
+export type LiveEvent =
+  | { type: 'join'; profile: LiveProfile }
+  | { type: 'profile'; profile: LiveProfile }
+  | { type: 'gift'; profile: LiveProfile; power: number }
+  | { type: 'tactic'; profile: LiveProfile; tactic: string };
 
 export interface LiveRoomState {
   roomCode: string;
@@ -44,6 +52,8 @@ const DEFAULT_USER: LiveProfile = {
   userId: 'demo-viewer',
   userName: '直播观众',
   coins: 1250,
+  giftPower: 0,
+  gifts: 0,
   rank: '新手',
   rating: 1000,
   weapon: 'pulse',
@@ -61,6 +71,7 @@ export class LiveCommandProcessor {
   readonly state: LiveRoomState;
   private profiles: Record<string, LiveProfile>;
   private readonly listeners = new Set<LiveUpdate>();
+  private readonly eventListeners = new Set<(event: LiveEvent) => void>();
   private socket?: WebSocket;
 
   constructor() {
@@ -68,16 +79,35 @@ export class LiveCommandProcessor {
     const saved = this.loadRoom();
     this.state = saved ?? {
       roomCode: this.makeRoomCode(), connected: false, accepting: true, started: false,
-      teamCount: 2, teamSize: 10, viewers: 1, profiles: [], feed: []
+      teamCount: 4, teamSize: 20, viewers: 1, profiles: [], feed: []
     };
     this.ensureDemoProfile();
     this.refreshProfiles();
+  }
+
+  launch() {
+    this.state.accepting = true;
+    this.state.started = true;
+    this.state.teamCount = 4;
+    this.state.teamSize = 20;
+    const demo = this.getProfile({ ...DEFAULT_USER, content: '', platform: 'system', timestamp: Date.now() });
+    demo.team ??= 'cyan';
+    this.emit();
   }
 
   subscribe(listener: LiveUpdate) {
     this.listeners.add(listener);
     listener(this.state);
     return () => this.listeners.delete(listener);
+  }
+
+  subscribeEvents(listener: (event: LiveEvent) => void) {
+    this.eventListeners.add(listener);
+    return () => this.eventListeners.delete(listener);
+  }
+
+  private emitEvent(event: LiveEvent) {
+    this.eventListeners.forEach(listener => listener(event));
   }
 
   private emit() {
@@ -146,6 +176,16 @@ export class LiveCommandProcessor {
       this.pushFeed(message, '本局已结束，报名重新开启', 'ok');
       return this.emit();
     }
+    const gift = compact.match(/^(?:送|礼物)(爱心|火箭|能量|礼物)?(\d*)$/);
+    if (gift) {
+      const amount = Math.max(1, Number(gift[2] || 1));
+      const power = gift[1] === '火箭' ? 30 : gift[1] === '能量' ? 10 : gift[1] === '爱心' ? 3 : 5;
+      profile.gifts += amount;
+      profile.giftPower += power * amount;
+      this.pushFeed(message, `收到${amount}份礼物，强化值 +${power * amount}`, 'ok');
+      this.emitEvent({ type: 'gift', profile: { ...profile }, power: power * amount });
+      return this.emit();
+    }
     if (/^(炸弹|水球|水气球)$/.test(compact)) {
       this.pushFeed(message, profile.coins >= 25 ? '已登记水气球行动' : '霓虹币不足，无法使用水气球', profile.coins >= 25 ? 'ok' : 'warn');
       if (profile.coins >= 25) profile.coins -= 25;
@@ -153,6 +193,7 @@ export class LiveCommandProcessor {
     }
     if (/^(涂地|进攻|冲锋|防守|潜墨)$/.test(compact)) {
       this.pushFeed(message, `已切换战术：${compact}`, 'ok');
+      this.emitEvent({ type: 'tactic', profile: { ...profile }, tactic: compact });
       return this.emit();
     }
     this.pushFeed(message, '未识别指令，发送“商店”查看可用命令', 'warn');
@@ -206,7 +247,7 @@ export class LiveCommandProcessor {
 
   private joinTeam(message: LiveMessage, team: Team) {
     const profile = this.getProfile(message);
-    if (!this.state.accepting) {
+    if (!this.state.accepting && !this.state.started) {
       this.pushFeed(message, '报名已关闭，等待下一局', 'warn');
       return this.emit();
     }
@@ -215,9 +256,12 @@ export class LiveCommandProcessor {
       this.pushFeed(message, `${TEAM_COLORS[team].name}队已满 ${this.state.teamSize} 人`, 'warn');
       return this.emit();
     }
+    const previousTeam = profile.team;
     profile.team = team;
     profile.ready = false;
     this.pushFeed(message, `已加入${TEAM_COLORS[team].name}队 ${count + 1}/${this.state.teamSize}`, 'ok');
+    this.emitEvent({ type: 'join', profile: { ...profile } });
+    if (previousTeam && previousTeam !== team) this.pushFeed(message, `已从${TEAM_COLORS[previousTeam].name}队转入${TEAM_COLORS[team].name}队`, 'info');
     this.emit();
   }
 
@@ -257,7 +301,8 @@ export class LiveCommandProcessor {
       this.pushFeed(message, '尚未拥有，请先购买', 'warn');
       return this.emit();
     }
-    this.pushFeed(message, '装备已更新，下局生效', 'ok');
+    this.pushFeed(message, '装备已更新，立即同步到直播角色', 'ok');
+    this.emitEvent({ type: 'profile', profile: { ...profile } });
     this.emit();
   }
 
@@ -292,7 +337,12 @@ export class LiveCommandProcessor {
   private canManage(message: LiveMessage) { return Boolean(message.isModerator || message.isStreamer || message.userId === 'demo-viewer'); }
   private topRankText() { return this.state.profiles.slice().sort((a, b) => b.rating - a.rating).slice(0, 3).map((item, index) => `${index + 1}.${item.userName} ${item.rating}`).join(' · ') || '榜单暂为空'; }
   private makeRoomCode() { return Math.random().toString(36).slice(2, 8).toUpperCase(); }
-  private loadProfiles(): Record<string, LiveProfile> { try { return JSON.parse(localStorage.getItem(PROFILE_KEY) || '{}'); } catch { return {}; } }
+  private loadProfiles(): Record<string, LiveProfile> {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(PROFILE_KEY) || '{}') as Record<string, Partial<LiveProfile>>;
+      return Object.fromEntries(Object.entries(parsed).map(([id, profile]) => [id, { ...DEFAULT_USER, ...profile, userId: id, giftPower: profile.giftPower ?? 0, gifts: profile.gifts ?? 0, ownedWeapons: profile.ownedWeapons ?? ['pulse'], ownedOutfits: profile.ownedOutfits ?? ['night-runner'], ownedHairstyles: profile.ownedHairstyles ?? ['short'] }])) as Record<string, LiveProfile>;
+    } catch { return {}; }
+  }
   private persistProfiles() { localStorage.setItem(PROFILE_KEY, JSON.stringify(this.profiles)); }
   private loadRoom(): LiveRoomState | null { try { return JSON.parse(localStorage.getItem(ROOM_KEY) || 'null'); } catch { return null; } }
   private persist() { localStorage.setItem(ROOM_KEY, JSON.stringify(this.state)); }
