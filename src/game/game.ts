@@ -282,6 +282,8 @@ export class NeonGame {
       coverage: this.paint.coverage(),
       teams: this.arena.teams,
       rules: this.arena.id === 'custom' ? this.save.customMode.rules : undefined,
+      matchTime: this.matchTime,
+      fighterNames: this.fighters.map(f => f.group.userData.displayName ?? null),
       liveMode: this.liveMode,
       liveRoom: this.liveRoom ? { roomCode: this.liveRoom.roomCode, connected: this.liveRoom.connected, viewers: this.liveRoom.viewers } : undefined,
       liveFeed: this.liveFeed,
