@@ -41,6 +41,12 @@ export interface LiveRoomState {
   started: boolean;
   teamCount: number;
   teamSize: number;
+  /** Configured team count for live matches (2-6). */
+  liveTeams: number;
+  /** Configured initial AI fighters per team (1-10). */
+  liveAiPerTeam: number;
+  /** Match duration in seconds; null means unlimited. */
+  liveMatchSeconds: number | null;
   viewers: number;
   profiles: LiveProfile[];
   feed: Array<{ userName: string; content: string; result: string; tone: 'ok' | 'warn' | 'info' }>;
@@ -79,19 +85,37 @@ export class LiveCommandProcessor {
     const saved = this.loadRoom();
     this.state = saved ?? {
       roomCode: this.makeRoomCode(), connected: false, accepting: true, started: false,
-      teamCount: 4, teamSize: 20, viewers: 1, profiles: [], feed: []
+      teamCount: 4, teamSize: 20, liveTeams: 4, liveAiPerTeam: 1, liveMatchSeconds: 120, viewers: 1, profiles: [], feed: []
     };
+    this.state.liveTeams ??= 4;
+    this.state.liveAiPerTeam ??= 1;
+    this.state.liveMatchSeconds ??= 120;
     this.ensureDemoProfile();
     this.refreshProfiles();
   }
 
   launch() {
     this.state.accepting = true;
-    this.state.started = true;
-    this.state.teamCount = 4;
+    this.state.started = false;
+    this.state.teamCount = this.state.liveTeams;
     this.state.teamSize = 20;
     const demo = this.getProfile({ ...DEFAULT_USER, content: '', platform: 'system', timestamp: Date.now() });
     demo.team ??= 'cyan';
+    this.emit();
+  }
+
+  /** Update pre-match live roster settings; the caller restarts the battle to apply them. */
+  configLive(teams: number, aiPerTeam: number, matchSeconds: number | null = this.state.liveMatchSeconds) {
+    this.state.liveTeams = Math.max(2, Math.min(6, Math.round(teams)));
+    this.state.liveAiPerTeam = Math.max(1, Math.min(10, Math.round(aiPerTeam)));
+    this.state.liveMatchSeconds = matchSeconds === null ? null : Math.max(30, Math.min(600, Math.round(matchSeconds)));
+    this.state.teamCount = this.state.liveTeams;
+    this.state.profiles.forEach(profile => {
+      if (profile.team) {
+        const index = TEAM_ORDER.indexOf(profile.team);
+        if (index >= this.state.liveTeams) profile.team = undefined;
+      }
+    });
     this.emit();
   }
 

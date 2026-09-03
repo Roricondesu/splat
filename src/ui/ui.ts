@@ -306,7 +306,7 @@ export class GameUI {
     this.liveProcessor = liveProcessor;
     this.spectating = spectating;
     const weapon = WEAPONS.find(w => w.id === this.save.weapon)!;
-    const activeTeams = liveMode ? TEAM_ORDER.slice(0, 4) : this.currentTeams();
+    const activeTeams = liveMode ? TEAM_ORDER.slice(0, liveProcessor?.state.liveTeams ?? 4) : this.currentTeams();
     const teamHud = activeTeams.map(team => `<div class="team-score team-${team}" aria-label="${TEAM_COLORS[team].name}队">${this.teamMark(TEAM_COLORS[team].css)}</div>`).join('');
     const teamMeters = activeTeams.map(team => `<i data-team-meter="${team}" style="background:${TEAM_COLORS[team].css};width:${100 / activeTeams.length}%"></i>`).join('');
     this.root.innerHTML = `
@@ -321,7 +321,7 @@ export class GameUI {
         <div class="crosshair"><i></i><i></i><i></i><i></i><b data-hitmarker></b></div>
         <div class="damage-vignette" data-damage-vignette></div>
         ${liveMode ? `<aside class="live-hud-panel"><div class="live-hud-line"><span class="live-dot"></span><b>LIVE</b><em data-live-hud-viewers>${liveProcessor?.state.viewers ?? 1}人</em></div><div class="live-hud-feed" data-live-hud-feed></div><div class="live-hud-gifts">礼物强化 <b data-live-hud-power>0</b></div><div class="live-hud-compose"><input data-live-hud-command placeholder="发送弹幕"/><button data-live-hud-send>发送</button></div><div class="live-hud-connect"><input data-live-hud-url placeholder="弹幕 WebSocket"/><button data-live-hud-connect>接入</button></div></aside>` : ''}
-        <div class="hud-bottom-left">
+        <div class="hud-bottom-left ${liveMode ? 'live-hidden-health' : ''}">
           <div class="weapon-hud" aria-label="当前武器"><span class="weapon-glyph">${this.blasterIcon(weapon.color)}</span></div>
           <div class="ammo-ring" aria-label="颜料余量"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="42"></circle><circle data-ammo-ring cx="50" cy="50" r="42"></circle></svg>${this.svgIcon('#b8ff3d', 31)}${this.svgDigits('100', { fill: '#b8ff3d', className: 'hud-digits ammo-digits', dataAttr: 'data-ammo-text' })}</div>
         </div>
@@ -329,6 +329,7 @@ export class GameUI {
         ${spectating ? '' : `<div class="score-chip" aria-label="占地贡献">${this.turfIcon()}${this.svgDigits('0000', { fill: '#b8ff3d', className: 'hud-digits score-digits', dataAttr: 'data-score' })}</div>`}
         <button class="pause-btn" data-pause aria-label="暂停">${this.pauseIcon()}</button>
         <div class="respawn-overlay" data-respawn aria-label="重新入场">${this.respawnIcon()}${this.svgDigits('3.0', { fill: '#ff6b2c', className: 'hud-digits respawn-digits', dataAttr: 'data-respawn-time' })}</div>
+        ${liveMode ? `<div class="live-command-help" data-live-help><b>弹幕指令</b><span>加入青队 · 商店 · 买滚筒 · 送火箭 · 涂地 · 进攻</span><button data-live-help-close>×</button></div>` : ''}
         ${spectating ? '' : `<div class="mobile-controls">
           <div class="joystick" data-stick aria-label="移动摇杆"><i data-stick-knob></i></div>
           <button class="bomb-btn" data-water-bomb aria-label="投掷水气球">${this.waterBombIcon()}</button>
@@ -338,6 +339,7 @@ export class GameUI {
         </div>`}
       </div>`;
     this.root.querySelector<HTMLElement>('[data-pause]')!.onclick = () => this.showPause();
+    if (liveMode) this.root.querySelector<HTMLElement>('[data-live-help-close]')?.addEventListener('click', event => { event.stopPropagation(); this.root.querySelector<HTMLElement>('[data-live-help]')?.classList.add('hidden'); });
     if (liveMode && liveProcessor) {
       this.liveEventUnsubscribe = liveProcessor.subscribeEvents(event => {
         const viewer = this.root.querySelector<HTMLElement>('[data-live-hud-viewers]');
@@ -581,8 +583,26 @@ export class GameUI {
   }
 
   private startLiveDirect() {
+    this.showLiveSetup();
+  }
+
+  private showLiveSetup() {
+    this.screen = 'live';
     this.live.launch();
-    this.actions.liveStart([], this.live.state, this.live);
+    const state = this.live.state;
+    this.root.innerHTML = `<div class="screen panel-screen live-setup-screen"><div class="panel-bg"></div><header class="panel-header"><button class="back-btn" data-action="back">←</button><div><small>DANMAKU LIVE SETUP</small><h2>直播开局设置</h2></div><div class="live-room-chip"><span class="live-dot"></span><b>房间 ${state.roomCode}</b></div></header><main class="live-setup-layout"><section class="live-setup-card glass"><div class="section-heading"><div><small>BEFORE MATCH</small><h3>先设置，再开始</h3></div></div><label><span>对战队伍<em>2～6 队，不同颜色</em></span><select data-live-teams>${[2,3,4,5,6].map(value => `<option value="${value}" ${value === state.liveTeams ? 'selected' : ''}>${value} 队</option>`).join('')}</select></label><label><span>每队初始 AI<em>开局自动生成</em></span><select data-live-ai>${Array.from({ length: 10 }, (_, index) => index + 1).map(value => `<option value="${value}" ${value === state.liveAiPerTeam ? 'selected' : ''}>${value} 个</option>`).join('')}</select></label><label><span>比赛时间<em>不限时可手动结束</em></span><select data-live-time><option value="120" ${state.liveMatchSeconds === 120 ? 'selected' : ''}>2 分钟</option><option value="180" ${state.liveMatchSeconds === 180 ? 'selected' : ''}>3 分钟</option><option value="300" ${state.liveMatchSeconds === 300 ? 'selected' : ''}>5 分钟</option><option value="unlimited" ${state.liveMatchSeconds === null ? 'selected' : ''}>不限时</option></select></label><div class="live-setup-preview"><b data-live-setup-summary>${state.liveTeams} 队 · ${state.liveAiPerTeam} AI / 队 · ${state.liveMatchSeconds === null ? '不限时' : `${state.liveMatchSeconds / 60} 分钟`}</b><span>观众进入后可实时加入队伍、购买装备和发送礼物强化</span></div><button class="primary-btn live-setup-start" data-live-setup-start><span>开始直播对战</span><small>进入游戏 HUD</small><b>→</b></button></section></main></div>`;
+    const update = () => {
+      const teams = Number(this.root.querySelector<HTMLSelectElement>('[data-live-teams]')!.value);
+      const ai = Number(this.root.querySelector<HTMLSelectElement>('[data-live-ai]')!.value);
+      const raw = this.root.querySelector<HTMLSelectElement>('[data-live-time]')!.value;
+      const seconds = raw === 'unlimited' ? null : Number(raw);
+      this.live.configLive(teams, ai, seconds);
+      const summary = this.root.querySelector<HTMLElement>('[data-live-setup-summary]');
+      if (summary) summary.textContent = `${teams} 队 · ${ai} AI / 队 · ${seconds === null ? '不限时' : `${seconds / 60} 分钟`}`;
+    };
+    this.root.querySelectorAll('[data-live-teams],[data-live-ai],[data-live-time]').forEach(control => control.addEventListener('change', update));
+    this.root.querySelector<HTMLElement>('[data-live-setup-start]')!.onclick = () => { update(); this.actions.liveStart([], this.live.state, this.live); };
+    this.bindCommon();
   }
 
   private currentTeams

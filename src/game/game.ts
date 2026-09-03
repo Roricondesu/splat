@@ -98,8 +98,11 @@ export class NeonGame {
   private readonly liveMode: boolean;
   private readonly liveInitialProfiles: LiveProfile[];
   private liveProfiles: LiveProfile[];
+  private liveTeamCount = 4;
+  private liveAiPerTeam = 1;
   private liveFeed: Array<{ userName: string; content: string; result: string; tone: 'ok' | 'warn' | 'info' }> = [];
   private liveGiftPower = 0;
+  private liveUnlimited = false;
   private elapsed = 0;
   private matchTime = this.getMatchDuration();
   private cameraYaw = Math.PI;
@@ -128,8 +131,11 @@ export class NeonGame {
   private playerShotCount = 0;
   private playerLastShotPellets = 0;
 
-  constructor(private canvas: HTMLCanvasElement, private save: SaveData, private callbacks: GameCallbacks, liveProfiles: LiveProfile[] = [], private liveRoom?: { roomCode: string; connected: boolean; viewers: number; profiles: LiveProfile[] }, private liveEvents?: LiveEventSource) {
+  constructor(private canvas: HTMLCanvasElement, private save: SaveData, private callbacks: GameCallbacks, liveProfiles: LiveProfile[] = [], private liveRoom?: { roomCode: string; connected: boolean; viewers: number; liveMatchSeconds?: number | null; liveTeams?: number; liveAiPerTeam?: number; profiles: LiveProfile[] }, private liveEvents?: LiveEventSource) {
     this.liveMode = Boolean(liveRoom);
+    this.liveUnlimited = this.liveMode && liveRoom?.liveMatchSeconds === null;
+    this.liveTeamCount = this.liveMode ? liveRoom?.liveTeams ?? 4 : 2;
+    this.liveAiPerTeam = this.liveMode ? liveRoom?.liveAiPerTeam ?? 1 : 1;
 
     this.liveInitialProfiles = liveProfiles;
     this.liveProfiles = liveProfiles.map(profile => ({ ...profile }));
@@ -141,7 +147,7 @@ export class NeonGame {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.input = new InputController(canvas, save.joystickMode);
-    this.arena = createArena(this.scene, this.liveMode ? 'custom' : save.arena, this.liveMode ? { ...save.customMode, worldSize: 72, teamSize: 1, teamCount: 4, blocks: [] } : save.customMode);
+    this.arena = createArena(this.scene, this.liveMode ? 'custom' : save.arena, this.liveMode ? { ...save.customMode, worldSize: 72, teamSize: 1, teamCount: this.liveTeamCount as 2 | 3 | 4 | 5 | 6, blocks: [] } : save.customMode);
     this.obstacles = this.arena.obstacles;
     this.paintables = this.arena.paintables;
     this.walkables = this.arena.walkables;
@@ -274,8 +280,10 @@ export class NeonGame {
       cameraY: this.camera.position.y,
       spectatorPitch: this.spectatorPitch,
       fighterCount: this.fighters.length,
-      teamSize: this.arena.teamSize,
+      teamSize: this.liveMode ? this.liveAiPerTeam : this.arena.teamSize,
       worldSize: this.arena.worldSize,
+      liveTeamCount: this.liveTeamCount,
+      liveAiPerTeam: this.liveAiPerTeam,
       activeAI: this.fighters.filter(f => !f.isPlayer).length,
       aiPositions: this.fighters.filter(f => !f.isPlayer).map(f => ({ id: f.id, x: f.group.position.x, y: f.group.position.y, z: f.group.position.z, health: f.health, stain: f.inkStain, stainTeam: f.inkStainTeam, grounded: f.grounded, mode: f.aiMode, colliding: f.grounded && this.collides(f.group.position.x, f.group.position.z, f.group.position.y, 0.12) })),
       aiCollisionViolations: this.fighters.filter(f => !f.isPlayer && f.grounded && this.collides(f.group.position.x, f.group.position.z, f.group.position.y, 0.12)).length,
@@ -416,8 +424,8 @@ export class NeonGame {
   private createTeams() {
     const weapon = WEAPONS.find(w => w.id === this.save.weapon) ?? WEAPONS[0];
     const outfit = OUTFITS.find(o => o.id === this.save.outfit) ?? OUTFITS[0];
-    const teamSize = this.liveMode ? 1 : this.arena.teamSize;
-    const teams = this.liveMode ? TEAM_ORDER.slice(0, 4) : this.arena.teams.length ? this.arena.teams : ['cyan', 'orange'] as Team[];
+    const teamSize = this.liveMode ? this.liveAiPerTeam : this.arena.teamSize;
+    const teams = this.liveMode ? TEAM_ORDER.slice(0, this.liveTeamCount) : this.arena.teams.length ? this.arena.teams : ['cyan', 'orange'] as Team[];
     let fighterId = 0;
     for (let teamIndex = 0; teamIndex < teams.length; teamIndex++) {
       const team = teams[teamIndex];
@@ -1510,7 +1518,8 @@ export class NeonGame {
 
   private getMatchDuration() {
     const requested = Number(new URLSearchParams(location.search).get('testMatchSeconds'));
-    const base = this.liveMode ? 120 : this.arena?.id === 'custom' ? this.save.customMode.rules.matchSeconds : 150;
+    const base = this.liveMode ? (this.liveUnlimited ? Number.POSITIVE_INFINITY : 120) : this.arena?.id === 'custom' ? this.save.customMode.rules.matchSeconds : 150;
+    if (this.liveMode && this.liveUnlimited) return Number.POSITIVE_INFINITY;
     return location.hostname === 'localhost' && Number.isFinite(requested) && requested > 0
       ? THREE.MathUtils.clamp(requested, 2, 300)
       : base;
