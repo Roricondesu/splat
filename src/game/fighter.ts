@@ -50,6 +50,8 @@ export interface Fighter {
   aimPitch: number;
   lastRollerPaintX: number;
   lastRollerPaintZ: number;
+  livePower: number;
+  liveUserId?: string;
 }
 
 interface FighterRig {
@@ -69,6 +71,7 @@ interface FighterRig {
   blobShadow: THREE.Mesh;
   ring: THREE.Mesh;
   inkStain: THREE.Mesh;
+  nameplate?: THREE.Sprite;
 }
 
 const BASE_VISUAL_SCALE_XZ = 0.78;
@@ -96,6 +99,30 @@ function toonMaterial(color: number) {
 
 function glossMaterial(color: number) {
   return new THREE.MeshPhysicalMaterial({ color, roughness: 0.12, metalness: 0.02, clearcoat: 1, clearcoatRoughness: 0.07 });
+}
+
+function createNameplate(name: string, team: Team) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 320;
+  canvas.height = 72;
+  const context = canvas.getContext('2d')!;
+  context.fillStyle = 'rgba(7, 19, 31, 0.84)';
+  context.fillRect(6, 8, 308, 56);
+  context.strokeStyle = `#${TEAM_COLORS[team].main.toString(16).padStart(6, '0')}`;
+  context.lineWidth = 5;
+  context.strokeRect(6, 8, 308, 56);
+  context.font = 'bold 28px Microsoft YaHei, sans-serif';
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  context.fillStyle = '#f4fbff';
+  context.fillText(name.slice(0, 18), 160, 36);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false, depthWrite: false }));
+  sprite.scale.set(2.05, 0.46, 1);
+  sprite.position.set(0, 2.62, 0);
+  sprite.renderOrder = 20;
+  return sprite;
 }
 
 function outlinedMesh(geometry: THREE.BufferGeometry, material: THREE.Material, outlineScale = 1.04) {
@@ -263,7 +290,9 @@ export function createFighter(
   weaponSpec: WeaponSpec,
   spawn: THREE.Vector3,
   outfit?: OutfitSpec,
-  selectedHairstyle?: HairstyleId
+  selectedHairstyle?: HairstyleId,
+  displayName?: string,
+  displayUserId?: string
 ): Fighter {
   const group = new THREE.Group();
   const visual = new THREE.Group();
@@ -544,6 +573,10 @@ export function createFighter(
   group.add(blobShadow);
 
   group.position.copy(spawn);
+  if (displayName) {
+    group.userData.displayName = displayName;
+    group.add(createNameplate(displayName, team));
+  }
   group.userData.fighterId = id;
   group.userData.rig = { visual, torso, head, hair, leftEye, rightEye, leftArm, rightArm, leftLeg, rightLeg, weapon, backpack, tankInk, blobShadow, ring, inkStain } satisfies FighterRig;
 
@@ -595,7 +628,9 @@ export function createFighter(
     rollerHitCooldown: 0,
     aimPitch: 0,
     lastRollerPaintX: spawn.x,
-    lastRollerPaintZ: spawn.z
+    lastRollerPaintZ: spawn.z,
+    livePower: 0,
+    liveUserId: displayUserId
   };
 }
 
