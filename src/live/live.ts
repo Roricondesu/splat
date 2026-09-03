@@ -1,4 +1,4 @@
-import { HAIRSTYLES, OUTFITS, TEAM_COLORS, TEAM_ORDER, Team, WEAPONS } from '../game/config';
+import { ArenaId, HAIRSTYLES, OUTFITS, TEAM_COLORS, TEAM_ORDER, Team, WEAPONS } from '../game/config';
 
 export interface LiveMessage {
   userId: string;
@@ -45,6 +45,10 @@ export interface LiveRoomState {
   liveTeams: number;
   /** Configured initial AI fighters per team (1-10). */
   liveAiPerTeam: number;
+  /** Maximum viewers allowed into the visible roster. */
+  liveTeamSize: number;
+  /** Live map used for the next match. */
+  liveArena: ArenaId;
   /** Match duration in seconds; null means unlimited. */
   liveMatchSeconds: number | null;
   viewers: number;
@@ -85,10 +89,12 @@ export class LiveCommandProcessor {
     const saved = this.loadRoom();
     this.state = saved ?? {
       roomCode: this.makeRoomCode(), connected: false, accepting: true, started: false,
-      teamCount: 4, teamSize: 20, liveTeams: 4, liveAiPerTeam: 1, liveMatchSeconds: 120, viewers: 1, profiles: [], feed: []
+      teamCount: 4, teamSize: 20, liveTeams: 4, liveAiPerTeam: 1, liveTeamSize: 20, liveArena: 'blank-expanse', liveMatchSeconds: 120, viewers: 1, profiles: [], feed: []
     };
     this.state.liveTeams ??= 4;
     this.state.liveAiPerTeam ??= 1;
+    this.state.liveTeamSize ??= 20;
+    this.state.liveArena ??= 'blank-expanse';
     this.state.liveMatchSeconds ??= 120;
     this.ensureDemoProfile();
     this.refreshProfiles();
@@ -105,10 +111,11 @@ export class LiveCommandProcessor {
   }
 
   /** Update pre-match live roster settings; the caller restarts the battle to apply them. */
-  configLive(teams: number, aiPerTeam: number, matchSeconds: number | null = this.state.liveMatchSeconds) {
+  configLive(teams: number, aiPerTeam: number, matchSeconds: number | null = this.state.liveMatchSeconds, arena: ArenaId = this.state.liveArena) {
     this.state.liveTeams = Math.max(2, Math.min(6, Math.round(teams)));
     this.state.liveAiPerTeam = Math.max(1, Math.min(10, Math.round(aiPerTeam)));
     this.state.liveMatchSeconds = matchSeconds === null ? null : Math.max(30, Math.min(600, Math.round(matchSeconds)));
+    this.state.liveArena = arena;
     this.state.teamCount = this.state.liveTeams;
     this.state.profiles.forEach(profile => {
       if (profile.team) {

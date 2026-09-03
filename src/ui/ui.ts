@@ -307,25 +307,26 @@ export class GameUI {
     this.spectating = spectating;
     const weapon = WEAPONS.find(w => w.id === this.save.weapon)!;
     const activeTeams = liveMode ? TEAM_ORDER.slice(0, liveProcessor?.state.liveTeams ?? 4) : this.currentTeams();
-    const teamHud = activeTeams.map(team => `<div class="team-score team-${team}" aria-label="${TEAM_COLORS[team].name}队">${this.teamMark(TEAM_COLORS[team].css)}</div>`).join('');
+    const crowdedTeams = activeTeams.length > 4;
+    const teamHud = activeTeams.map(team => `<div class="team-score team-${team}" aria-label="${TEAM_COLORS[team].name}队"><span class="team-score-label">${TEAM_COLORS[team].name}</span>${this.teamMark(TEAM_COLORS[team].css)}<b data-team-percent="${team}">0%</b></div>`).join('');
     const teamMeters = activeTeams.map(team => `<i data-team-meter="${team}" style="background:${TEAM_COLORS[team].css};width:${100 / activeTeams.length}%"></i>`).join('');
     this.root.innerHTML = `
       <div class="screen game-screen ${liveMode ? 'live-game-screen' : ''}">
         <canvas id="game-canvas"></canvas>
         <div class="game-vignette"></div>
-        <header class="hud-top" aria-label="对战状态">
+        <header class="hud-top ${crowdedTeams ? 'crowded-teams' : ''}" aria-label="对战状态">
           ${teamHud}
           <div class="timer" aria-label="剩余时间">${liveMode ? `<span class="live-hud-room">LIVE · ${liveProcessor?.state.roomCode ?? 'ROOM'}</span>` : ''}${this.timerGlyph()}${this.svgDigits(liveMode ? '2:00' : '2:30', { fill: '#ffffff', className: 'hud-digits time-digits', dataAttr: 'data-time' })}</div>
         </header>
         <div class="turf-meter multi-team-meter">${teamMeters}</div>
         <div class="crosshair"><i></i><i></i><i></i><i></i><b data-hitmarker></b></div>
         <div class="damage-vignette" data-damage-vignette></div>
-        ${liveMode ? `<aside class="live-hud-panel"><div class="live-hud-line"><span class="live-dot"></span><b>LIVE</b><em data-live-hud-viewers>${liveProcessor?.state.viewers ?? 1}人</em></div><div class="live-hud-feed" data-live-hud-feed></div><div class="live-hud-gifts">礼物强化 <b data-live-hud-power>0</b></div><div class="live-hud-compose"><input data-live-hud-command placeholder="发送弹幕"/><button data-live-hud-send>发送</button></div><div class="live-hud-connect"><input data-live-hud-url placeholder="弹幕 WebSocket"/><button data-live-hud-connect>接入</button></div></aside>` : ''}
+        ${liveMode ? `<aside class="live-hud-panel"><div class="live-hud-line"><span class="live-dot"></span><b>LIVE</b><em data-live-hud-viewers>${liveProcessor?.state.viewers ?? 1}人</em></div><div class="live-hud-roster" data-live-hud-roster></div><div class="live-hud-feed" data-live-hud-feed></div><div class="live-hud-gifts">礼物强化 <b data-live-hud-power>0</b></div><details open class="live-hud-controls"><summary>主播控制</summary><div class="live-hud-compose"><input data-live-hud-command placeholder="发送弹幕"/><button data-live-hud-send>发送</button></div><div class="live-hud-connect"><input data-live-hud-url placeholder="弹幕 WebSocket"/><button data-live-hud-connect>接入</button></div></details></aside>` : ''}
         <div class="hud-bottom-left ${liveMode ? 'live-hidden-health' : ''}">
           <div class="weapon-hud" aria-label="当前武器"><span class="weapon-glyph">${this.blasterIcon(weapon.color)}</span></div>
           <div class="ammo-ring" aria-label="颜料余量"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="42"></circle><circle data-ammo-ring cx="50" cy="50" r="42"></circle></svg>${this.svgIcon('#b8ff3d', 31)}${this.svgDigits('100', { fill: '#b8ff3d', className: 'hud-digits ammo-digits', dataAttr: 'data-ammo-text' })}</div>
         </div>
-        <div class="health-ring" aria-label="生命值"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="42"></circle><circle data-health-ring cx="50" cy="50" r="42"></circle></svg>${this.healthIcon()}${this.svgDigits('100', { fill: '#ffffff', className: 'hud-digits health-digits', dataAttr: 'data-health' })}</div>
+        ${liveMode || spectating ? '' : '<div class="health-ring" aria-label="生命值"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="42"></circle><circle data-health-ring cx="50" cy="50" r="42"></circle></svg>' + this.healthIcon() + this.svgDigits('100', { fill: '#ffffff', className: 'hud-digits health-digits', dataAttr: 'data-health' }) + '</div>'}
         ${spectating ? '' : `<div class="score-chip" aria-label="占地贡献">${this.turfIcon()}${this.svgDigits('0000', { fill: '#b8ff3d', className: 'hud-digits score-digits', dataAttr: 'data-score' })}</div>`}
         <button class="pause-btn" data-pause aria-label="暂停">${this.pauseIcon()}</button>
         <div class="respawn-overlay" data-respawn aria-label="重新入场">${this.respawnIcon()}${this.svgDigits('3.0', { fill: '#ff6b2c', className: 'hud-digits respawn-digits', dataAttr: 'data-respawn-time' })}</div>
@@ -346,6 +347,12 @@ export class GameUI {
         if (viewer) viewer.textContent = `${liveProcessor.state.viewers}人`;
         const power = this.root.querySelector<HTMLElement>('[data-live-hud-power]');
         if (power && event.type === 'gift') power.textContent = String(event.profile.giftPower);
+        const roster = this.root.querySelector<HTMLElement>('[data-live-hud-roster]');
+        if (roster) {
+          const counts = new Map<Team, number>();
+          liveProcessor.state.profiles.forEach(profile => { if (profile.team) counts.set(profile.team, (counts.get(profile.team) ?? 0) + 1); });
+          roster.textContent = activeTeams.map(team => `${TEAM_COLORS[team].name} ${counts.get(team) ?? 0}`).join('  ·  ');
+        }
         const feed = this.root.querySelector<HTMLElement>('[data-live-hud-feed]');
         if (feed) {
           const label = event.type === 'gift' ? `礼物强化 +${event.power}` : event.type === 'join' ? `加入${TEAM_COLORS[event.profile.team ?? 'cyan'].name}队` : event.type === 'tactic' ? event.tactic : '装备同步';
@@ -391,12 +398,16 @@ export class GameUI {
     const q = <T extends Element = HTMLElement>(s: string) => this.root.querySelector<T>(s);
     this.updateDigits(q<SVGSVGElement>('[data-time]'), this.endingReveal ? '0:00' : `${Math.floor(stats.time / 60)}:${Math.floor(stats.time % 60).toString().padStart(2, '0')}`);
     q<HTMLElement>('[data-meter-cyan]')?.style.setProperty('width', `${stats.cyan}%`);
-    Object.entries(stats.teams ?? {}).forEach(([team, percent]) => q<HTMLElement>(`[data-team-meter="${team}"]`)?.style.setProperty('width', `${percent}%`));
+    Object.entries(stats.teams ?? {}).forEach(([team, percent]) => {
+      q<HTMLElement>(`[data-team-meter="${team}"]`)?.style.setProperty('width', `${percent}%`);
+      const percentEl = q<HTMLElement>(`[data-team-percent="${team}"]`);
+      if (percentEl) percentEl.textContent = `${Math.round(percent)}%`;
+    });
     this.updateDigits(q<SVGSVGElement>('[data-ammo-text]'), `${Math.round(stats.ammo)}`);
     const ammoRatio = Math.max(0, Math.min(100, stats.ammo)) / 100;
     q<SVGCircleElement>('[data-ammo-ring]')!.style.strokeDashoffset = `${264 - 264 * ammoRatio}`;
     this.updateDigits(q<SVGSVGElement>('[data-health]'), `${Math.max(0, Math.round(stats.health))}`);
-    q<SVGCircleElement>('[data-health-ring]')!.style.strokeDashoffset = `${264 - 264 * Math.max(0, stats.health) / 100}`;
+    q<SVGCircleElement>('[data-health-ring]')?.style.setProperty('strokeDashoffset', `${264 - 264 * Math.max(0, stats.health) / 100}`);
     if (!this.spectating) this.updateDigits(q<SVGSVGElement>('[data-score]'), Math.round(stats.score).toString().padStart(4, '0'));
     const damageVignette = q<HTMLElement>('[data-damage-vignette]');
     if (damageVignette && stats.health < this.previousHealth) {

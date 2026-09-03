@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
 import { ArenaBuild, createArena } from './arena';
-import { Difficulty, HAIRSTYLES, HairstyleId, OUTFITS, SaveData, TEAM_COLORS, TEAM_ORDER, Team, WEAPONS, WeaponSpec } from './config';
+import { Difficulty, HAIRSTYLES, HairstyleId, ArenaId, OUTFITS, SaveData, TEAM_COLORS, TEAM_ORDER, Team, WEAPONS, WeaponSpec } from './config';
 import { animateFighter, createFighter, Fighter, resetFighterPose } from './fighter';
 import { InputController } from './input';
 import { PaintField } from './paintField';
@@ -98,8 +98,11 @@ export class NeonGame {
   private readonly liveMode: boolean;
   private readonly liveInitialProfiles: LiveProfile[];
   private liveProfiles: LiveProfile[];
+  private readonly liveFighters = new Map<string, Fighter>();
+  private unsubscribeLiveEvents?: () => boolean;
   private liveTeamCount = 4;
   private liveAiPerTeam = 1;
+  private liveTeamSize = 20;
   private liveFeed: Array<{ userName: string; content: string; result: string; tone: 'ok' | 'warn' | 'info' }> = [];
   private liveGiftPower = 0;
   private liveUnlimited = false;
@@ -123,6 +126,8 @@ export class NeonGame {
   private readonly spectatorFocus = new THREE.Vector3();
   private readonly spectatorTarget = new THREE.Vector3();
   private spectatorRadius = 18;
+  private spectatorBoundsTimer = 0;
+  private spectatorAliveCount = 0;
   private spectatorInitialized = false;
   private readonly projectileGeometries: Record<'small' | 'large' | 'tailSmall' | 'tailLarge', THREE.BufferGeometry>;
   private readonly projectileMaterials: Record<Team, THREE.MeshToonMaterial>;
@@ -131,7 +136,7 @@ export class NeonGame {
   private playerShotCount = 0;
   private playerLastShotPellets = 0;
 
-  constructor(private canvas: HTMLCanvasElement, private save: SaveData, private callbacks: GameCallbacks, liveProfiles: LiveProfile[] = [], private liveRoom?: { roomCode: string; connected: boolean; viewers: number; liveMatchSeconds?: number | null; liveTeams?: number; liveAiPerTeam?: number; profiles: LiveProfile[] }, private liveEvents?: LiveEventSource) {
+  constructor(private canvas: HTMLCanvasElement, private save: SaveData, private callbacks: GameCallbacks, liveProfiles: LiveProfile[] = [], private liveRoom?: { roomCode: string; connected: boolean; viewers: number; liveMatchSeconds?: number | null; liveTeams?: number; liveAiPerTeam?: number; liveTeamSize?: number; profiles: LiveProfile[] }, private liveEvents?: LiveEventSource) {
     this.liveMode = Boolean(liveRoom);
     this.liveUnlimited = this.liveMode && liveRoom?.liveMatchSeconds === null;
     this.liveTeamCount = this.liveMode ? liveRoom?.liveTeams ?? 4 : 2;
@@ -139,15 +144,16 @@ export class NeonGame {
 
     this.liveInitialProfiles = liveProfiles;
     this.liveProfiles = liveProfiles.map(profile => ({ ...profile }));
+    this.liveTeamSize = this.liveMode ? this.liveAiPerTeam : 1;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: save.quality !== 'low', powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, save.quality === 'high' ? 1.6 : save.quality === 'medium' ? 1.25 : 1));
-    this.renderer.shadowMap.enabled = save.quality !== 'low';
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.liveMode ? 1.25 : save.quality === 'high' ? 1.6 : save.quality === 'medium' ? 1.25 : 1));
+    this.renderer.shadowMap.enabled = save.quality !== 'low' && !this.liveMode;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.input = new InputController(canvas, save.joystickMode);
-    this.arena = createArena(this.scene, this.liveMode ? 'custom' : save.arena, this.liveMode ? { ...save.customMode, worldSize: 72, teamSize: 1, teamCount: this.liveTeamCount as 2 | 3 | 4 | 5 | 6, blocks: [] } : save.customMode);
+    this.arena = createArena(this.scene, this.liveMode ? 'custom' : save.arena, this.liveMode ? { ...save.customMode, worldSize: 72, teamSize: this.liveTeamSize, teamCount: this.liveTeamCount as 2 | 3 | 4 | 5 | 6, blocks: [] } : save.customMode);
     this.obstacles = this.arena.obstacles;
     this.paintables = this.arena.paintables;
     this.walkables = this.arena.walkables;
@@ -166,7 +172,7 @@ export class NeonGame {
     this.tailMaterials = Object.fromEntries(TEAM_ORDER.map(team => [team, new THREE.MeshBasicMaterial({ color: TEAM_COLORS[team].main, transparent: true, opacity: 0.34, depthWrite: false })])) as Record<Team, THREE.MeshBasicMaterial>;
     this.difficulty = save.difficulty;
     this.createTeams();
-    this.liveEvents?.subscribeEvents(event => this.handleLiveEvent(event));
+    this.unsubscribeLiveEvents = this.liveEvents?.subscribeEvents(event => this.handleLiveEvent(event));
     this.resize();
     window.addEventListener('resize', this.resize);
   }
@@ -177,24 +183,40 @@ export class NeonGame {
     if (!this.liveMode) return;
     const profileIndex = this.liveProfiles.findIndex(profile => profile.userId === event.profile.userId);
     if (profileIndex >= 0) this.liveProfiles[profileIndex] = { ...event.profile };
-    else if (event.type === 'join') {
-      this.liveProfiles.push({ ...event.profile });
+    else if (event.type === 'join') this.liveProfiles.push({ ...event.profile });
+
+    const fighter = this.liveFighters.get(event.profile.userId);
+    if (event.type === 'join' && !fighter) {
       this.addLiveViewer(event.profile);
+    } else if (fighter) {
+      if (event.type === 'join' && event.profile.team && fighter.team !== event.profile.team) this.reassignLiveViewer(fighter, event.profile);
+      if (event.type === 'profile') this.updateLiveLoadout(fighter, event.profile);
+      if (event.type === 'gift') fighter.livePower += event.power;
     }
     if (event.type === 'gift') {
       this.liveGiftPower += event.power;
-      const fighter = this.fighters.find(item => item.liveUserId === event.profile.userId);
-      if (fighter) fighter.livePower += event.power;
       this.liveFeed.unshift({ userName: event.profile.userName, content: '礼物', result: `强化 +${event.power}`, tone: 'ok' });
       this.liveFeed.splice(10);
       return;
     }
-    const fighter = this.fighters.find(item => item.liveUserId === event.profile.userId);
-    if (!fighter) return;
-    if (event.type === 'profile') {
-      const weapon = WEAPONS.find(item => item.id === event.profile.weapon);
-      if (weapon) fighter.weapon = weapon;
-    }
+  }
+
+  private updateLiveLoadout(fighter: Fighter, profile: LiveProfile) {
+    const weapon = WEAPONS.find(item => item.id === profile.weapon);
+    if (weapon) fighter.weapon = weapon;
+  }
+
+  private reassignLiveViewer(fighter: Fighter, profile: LiveProfile) {
+    if (!profile.team) return;
+    const team = profile.team;
+    const spawn = this.arena.spawns[team]?.[this.fighters.filter(item => item.team === team).length % Math.max(1, this.arena.spawns[team]?.length ?? 1)] ?? new THREE.Vector3();
+    this.liveFighters.delete(profile.userId);
+    fighter.team = team;
+    fighter.spawn.copy(spawn);
+    fighter.group.position.copy(spawn);
+    fighter.alive = true;
+    fighter.group.visible = true;
+    this.liveFighters.set(profile.userId, fighter);
   }
 
   private addLiveViewer(profile: LiveProfile) {
@@ -209,6 +231,7 @@ export class NeonGame {
     const fighter = createFighter(this.fighters.length, team, false, weapon, anchor, outfit, hair, profile.userName, profile.userId);
     fighter.livePower = profile.giftPower;
     this.fighters.push(fighter);
+    this.liveFighters.set(profile.userId, fighter);
     this.scene.add(fighter.group);
     this.paint.paint(anchor.x, anchor.z, 1.8, team, 1, 'spawn');
   }
@@ -408,6 +431,9 @@ export class NeonGame {
   }
 
   dispose() {
+    this.liveFighters.clear();
+    this.unsubscribeLiveEvents?.();
+    this.unsubscribeLiveEvents = undefined;
     this.running = false;
     window.removeEventListener('resize', this.resize);
     this.input.dispose();
@@ -424,21 +450,25 @@ export class NeonGame {
   private createTeams() {
     const weapon = WEAPONS.find(w => w.id === this.save.weapon) ?? WEAPONS[0];
     const outfit = OUTFITS.find(o => o.id === this.save.outfit) ?? OUTFITS[0];
-    const teamSize = this.liveMode ? this.liveAiPerTeam : this.arena.teamSize;
+    const teamSize = this.liveMode ? this.liveTeamSize : this.arena.teamSize;
     const teams = this.liveMode ? TEAM_ORDER.slice(0, this.liveTeamCount) : this.arena.teams.length ? this.arena.teams : ['cyan', 'orange'] as Team[];
     let fighterId = 0;
     for (let teamIndex = 0; teamIndex < teams.length; teamIndex++) {
       const team = teams[teamIndex];
       const spawns = this.arena.spawns[team] ?? [];
+      const teamProfiles = this.liveMode ? this.liveInitialProfiles.filter(profile => profile.team === team).slice(0, teamSize) : [];
       for (let member = 0; member < teamSize; member++) {
         const spawn = spawns[member] ?? new THREE.Vector3(Math.cos(teamIndex / teams.length * Math.PI * 2) * 24, 0, Math.sin(teamIndex / teams.length * Math.PI * 2) * 24);
-        const liveProfile = this.liveMode ? this.liveInitialProfiles.find(profile => profile.team === team) : undefined;
+        const liveProfile = teamProfiles[member];
         const isPlayer = teamIndex === 0 && member === 0;
         const liveWeapon = liveProfile ? WEAPONS.find(item => item.id === liveProfile.weapon) ?? weapon : weapon;
         const liveOutfit = liveProfile ? OUTFITS.find(item => item.id === liveProfile.outfit) ?? outfit : outfit;
         const liveHair: HairstyleId = (liveProfile?.hairstyle as HairstyleId | undefined) ?? this.save.hairstyle;
         const fighter = createFighter(fighterId++, team, isPlayer, liveProfile ? liveWeapon : isPlayer ? weapon : WEAPONS[(fighterId + 1) % WEAPONS.length], spawn, liveProfile ? liveOutfit : isPlayer ? outfit : OUTFITS[fighterId % OUTFITS.length], liveProfile ? liveHair : isPlayer ? this.save.hairstyle : HAIRSTYLES[fighterId % HAIRSTYLES.length].id, liveProfile?.userName, liveProfile?.userId);
-        if (liveProfile) fighter.livePower = liveProfile.giftPower;
+        if (liveProfile) {
+          fighter.livePower = liveProfile.giftPower;
+          this.liveFighters.set(liveProfile.userId, fighter);
+        }
         this.fighters.push(fighter); this.scene.add(fighter.group);
         if (isPlayer) this.player = fighter;
       }
@@ -1361,35 +1391,41 @@ export class NeonGame {
 
   private updateCamera(dt: number) {
     if (this.spectatorMode) {
-      let aliveCount = 0;
-      let minX = Infinity;
-      let maxX = -Infinity;
-      let minZ = Infinity;
-      let maxZ = -Infinity;
-      this.spectatorTarget.set(0, 0, 0);
-      for (const fighter of this.fighters) {
-        if (!fighter.alive) continue;
-        const position = fighter.group.position;
-        this.spectatorTarget.add(position);
-        minX = Math.min(minX, position.x);
-        maxX = Math.max(maxX, position.x);
-        minZ = Math.min(minZ, position.z);
-        maxZ = Math.max(maxZ, position.z);
-        aliveCount++;
+      this.spectatorBoundsTimer -= dt;
+      if (this.spectatorBoundsTimer <= 0 || !this.spectatorInitialized) {
+        this.spectatorBoundsTimer = this.liveMode ? 0.08 : 0.12;
+        let aliveCount = 0;
+        let minX = Infinity;
+        let maxX = -Infinity;
+        let minZ = Infinity;
+        let maxZ = -Infinity;
+        this.spectatorTarget.set(0, 0, 0);
+        for (const fighter of this.fighters) {
+          if (!fighter.alive) continue;
+          const position = fighter.group.position;
+          this.spectatorTarget.add(position);
+          minX = Math.min(minX, position.x);
+          maxX = Math.max(maxX, position.x);
+          minZ = Math.min(minZ, position.z);
+          maxZ = Math.max(maxZ, position.z);
+          aliveCount++;
+        }
+        if (aliveCount > 0) this.spectatorTarget.multiplyScalar(1 / aliveCount);
+        this.spectatorTarget.y = 1.2;
+        this.spectatorAliveCount = aliveCount;
+        const baseRadius = aliveCount > 0 ? Math.max(12, Math.hypot(maxX - minX, maxZ - minZ) * 0.58) : 18;
+        // Live broadcasts need the whole readable playfield, not just a tight duel crop.
+        const broadcastRadius = this.liveMode ? Math.max(baseRadius, this.arena.worldSize * 0.46) : baseRadius;
+        this.spectatorRadius = this.spectatorInitialized ? THREE.MathUtils.lerp(this.spectatorRadius, broadcastRadius, 0.35) : broadcastRadius;
       }
-      if (aliveCount > 0) this.spectatorTarget.multiplyScalar(1 / aliveCount);
-      this.spectatorTarget.y = 1.2;
-      const targetRadius = aliveCount > 0 ? Math.max(12, Math.hypot(maxX - minX, maxZ - minZ) * 0.58) : 18;
       if (!this.spectatorInitialized) {
         this.spectatorFocus.copy(this.spectatorTarget);
-        this.spectatorRadius = targetRadius;
         this.spectatorInitialized = true;
       }
       const focusBlend = 1 - Math.pow(0.12, dt);
       const radiusBlend = 1 - Math.pow(0.2, dt);
       this.spectatorFocus.lerp(this.spectatorTarget, focusBlend);
-      this.spectatorRadius = THREE.MathUtils.lerp(this.spectatorRadius, targetRadius, radiusBlend);
-      const maxSpectatorDistance = this.arena.worldSize > 50 ? 68 : 44;
+      const maxSpectatorDistance = this.arena.worldSize > 50 ? (this.liveMode ? 82 : 68) : (this.liveMode ? 52 : 44);
       const fittedDistance = THREE.MathUtils.clamp(Math.max(this.spectatorDistance, this.spectatorRadius * 1.55), 26, maxSpectatorDistance);
       const horizontal = Math.cos(this.spectatorPitch) * fittedDistance;
       this.scratchA.set(
