@@ -52,6 +52,14 @@ export interface Fighter {
   lastRollerPaintZ: number;
   livePower: number;
   liveUserId?: string;
+  /** 1 → 0 collapse timer played when the fighter is splatted. */
+  elimination: number;
+  /** Brief directional recoil after taking a hit. */
+  flinch: number;
+  /** Local-space angle the incoming hit came from. */
+  flinchDir: number;
+  /** Crouch lead-in before a jump leaves the ground. */
+  jumpCharge: number;
 }
 
 interface FighterRig {
@@ -630,8 +638,60 @@ export function createFighter(
     lastRollerPaintX: spawn.x,
     lastRollerPaintZ: spawn.z,
     livePower: 0,
-    liveUserId: displayUserId
+    liveUserId: displayUserId,
+    elimination: 0,
+    flinch: 0,
+    flinchDir: 0,
+    jumpCharge: 0
   };
+}
+
+/**
+ * Splat collapse: the fighter flattens, spins and sinks into the ink puddle instead of
+ * vanishing on the spot. Runs while `alive` is already false, so combat logic ignores it.
+ */
+export function animateElimination(fighter: Fighter, dt: number) {
+  const rig = fighter.group.userData.rig as FighterRig;
+  const progress = 1 - THREE.MathUtils.clamp(fighter.elimination, 0, 1);
+  fighter.elimination = Math.max(0, fighter.elimination - dt / 0.72);
+  fighter.velocity.multiplyScalar(0.86);
+
+  const flatten = THREE.MathUtils.smoothstep(progress, 0.04, 0.7);
+  const spread = 1 + flatten * 0.62;
+  rig.visual.scale.set(
+    BASE_VISUAL_SCALE_XZ * spread,
+    BASE_VISUAL_SCALE_Y * (1 - flatten * 0.88),
+    BASE_VISUAL_SCALE_XZ * spread
+  );
+  rig.visual.position.set(0, -0.42 * progress, 0);
+  rig.visual.rotation.set(progress * 0.55, progress * Math.PI * 1.5, Math.sin(progress * Math.PI * 1.2) * 0.4);
+  rig.torso.rotation.set(progress * 0.3, 0, 0);
+  rig.torso.scale.set(1, 1 - flatten * 0.4, 1);
+  rig.head.rotation.set(progress * 0.7, 0, 0);
+  rig.hair.rotation.set(progress * 0.5, 0, 0);
+  rig.leftArm.rotation.set(-0.95 - progress * 1.5, 0, 0.42 + progress * 0.6);
+  rig.rightArm.rotation.set(-1.18 - progress * 1.5, 0, -0.22 - progress * 0.6);
+  rig.leftLeg.rotation.set(-progress * 0.95, 0, -0.18 - progress * 0.3);
+  rig.rightLeg.rotation.set(-progress * 0.95, 0, 0.18 + progress * 0.3);
+  rig.weapon.rotation.set(-0.12 - progress * 0.8, -0.12, 0);
+
+  const eye = Math.max(0, 1 - progress * 1.6);
+  rig.leftEye.scale.y = eye;
+  rig.rightEye.scale.y = eye;
+  if (rig.nameplate) rig.nameplate.visible = progress < 0.34;
+
+  rig.blobShadow.position.y = -fighter.group.position.y + 0.045;
+  const shadowScale = THREE.MathUtils.clamp(1 - progress * 0.35, 0.45, 1);
+  rig.blobShadow.scale.setScalar(shadowScale * (1 + progress * 1.15));
+  (rig.blobShadow.material as THREE.MeshBasicMaterial).opacity = 0.34 * shadowScale * (1 - progress * 0.75);
+
+  const ringMaterial = rig.ring.material as THREE.MeshBasicMaterial;
+  ringMaterial.opacity = Math.max(0, 0.6 * (1 - progress));
+  rig.ring.position.y = -fighter.group.position.y + 0.05;
+  rig.ring.scale.setScalar(1 + progress * 1.4);
+
+  (rig.inkStain.material as THREE.MeshPhysicalMaterial).opacity = fighter.inkStain * 0.62;
+  rig.inkStain.rotation.y += dt * 0.32;
 }
 
 export function resetFighterPose(fighter: Fighter) {
@@ -658,6 +718,10 @@ export function resetFighterPose(fighter: Fighter) {
   rig.weapon.position.set(0.42, 1.04, 0.48);
   rig.weapon.rotation.set(-0.12, -0.12, 0);
   rig.backpack.rotation.set(0, 0, 0);
+  fighter.elimination = 0;
+  fighter.flinch = 0;
+  fighter.flinchDir = 0;
+  fighter.jumpCharge = 0;
   fighter.inkStain = 0;
   fighter.inkStainTeam = null;
   (rig.inkStain.material as THREE.MeshPhysicalMaterial).opacity = 0;
@@ -705,12 +769,12 @@ export function animateFighter(fighter: Fighter, time: number, speed: number, dt
     rig.leftArm.rotation.x = -0.55 + swimKick * 0.3;
     rig.rightArm.rotation.x = -0.7 - swimKick * 0.3;
   } else {
-    rig.leftLeg.rotation.x = stride * 0.68 * (1 - airborne) - airTuck;
-    rig.rightLeg.rotation.x = -stride * 0.68 * (1 - airborne) - airTuck * 0.75;
+    rig.leftLeg.rotation.x = stride * 0.86 * (1 - airborne) - airTuck;
+    rig.rightLeg.rotation.x = -stride * 0.86 * (1 - airborne) - airTuck * 0.75;
     rig.leftLeg.rotation.z = -0.025 - airborne * 0.12;
     rig.rightLeg.rotation.z = 0.025 + airborne * 0.12;
-    rig.leftArm.rotation.x = -0.95 - stride * 0.14 * (1 - airborne) + airborne * 0.2;
-    rig.rightArm.rotation.x = -1.18 + stride * 0.1 * (1 - airborne) + airborne * 0.12;
+    rig.leftArm.rotation.x = -0.95 - stride * 0.36 * (1 - airborne) + airborne * 0.2;
+    rig.rightArm.rotation.x = -1.18 + stride * 0.3 * (1 - airborne) + airborne * 0.12;
   }
   rig.leftArm.rotation.z = 0.42;
   rig.rightArm.rotation.z = -0.22;
@@ -775,6 +839,30 @@ export function animateFighter(fighter: Fighter, time: number, speed: number, dt
   ringMaterial.opacity = (fighter.isPlayer ? 0.68 : 0.26) + Math.sin(time * 4 + fighter.id) * 0.07;
   rig.ring.position.y = -fighter.group.position.y + 0.05;
   rig.ring.scale.setScalar(1 + Math.sin(time * 4 + fighter.id) * 0.03 + swim * 0.22);
+
+  // Takeoff snap: legs extend as the fighter leaves the ground, then tuck for the air phase.
+  fighter.jumpCharge = Math.max(0, fighter.jumpCharge - dt * 5);
+  const takeoff = fighter.jumpCharge * (1 - swim);
+  if (takeoff > 0.001) {
+    rig.leftLeg.rotation.x += takeoff * 0.55;
+    rig.rightLeg.rotation.x += takeoff * 0.55;
+    rig.leftArm.rotation.x -= takeoff * 0.55;
+    rig.rightArm.rotation.x -= takeoff * 0.4;
+    rig.visual.position.y += takeoff * 0.06;
+  }
+
+  // Directional flinch: the body is shoved away from the incoming shot, then recovers.
+  fighter.flinch = Math.max(0, fighter.flinch - dt * 2.8);
+  const flinchAmount = fighter.flinch * fighter.flinch * (1 - swim);
+  rig.visual.position.x = Math.cos(fighter.flinchDir) * flinchAmount * 0.2;
+  rig.visual.position.z = Math.sin(fighter.flinchDir) * flinchAmount * 0.2;
+  if (flinchAmount > 0.001) {
+    rig.torso.rotation.z += Math.sin(fighter.flinchDir) * flinchAmount * 0.35;
+    rig.torso.rotation.x += flinchAmount * 0.32;
+    rig.head.rotation.x += flinchAmount * 0.26;
+    rig.leftArm.rotation.x -= flinchAmount * 0.4;
+    rig.rightArm.rotation.x -= flinchAmount * 0.28;
+  }
 
   if (fighter.hitFlash > 0) {
     fighter.hitFlash = Math.max(0, fighter.hitFlash - dt);

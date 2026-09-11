@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
 import { ArenaBuild, createArena } from './arena';
 import { Difficulty, HAIRSTYLES, HairstyleId, ArenaId, OUTFITS, SaveData, TEAM_COLORS, TEAM_ORDER, Team, WEAPONS, WeaponSpec } from './config';
-import { animateFighter, createFighter, Fighter, resetFighterPose } from './fighter';
+import { animateElimination, animateFighter, createFighter, Fighter, resetFighterPose } from './fighter';
 import { InputController } from './input';
 import { PaintField } from './paintField';
 import type { LiveEvent, LiveProfile } from '../live/live';
@@ -402,6 +402,33 @@ export class NeonGame {
     return true;
   }
 
+  /** Force a splat on the nearest living AI so the collapse animation can be asserted. */
+  debugEliminateNearestAi() {
+    if (location.hostname !== 'localhost') return null;
+    const target = this.fighters.find(fighter => !fighter.isPlayer && fighter.alive);
+    if (!target) return null;
+    this.eliminate(target, this.player);
+    return { id: target.id, elimination: target.elimination, visible: target.group.visible };
+  }
+
+  /** Snapshot of per-fighter animation state for regression checks. */
+  debugFighterAnimation() {
+    return this.fighters.slice(0, 10).map(fighter => {
+      const rig = fighter.group.userData.rig as { visual?: THREE.Object3D } | undefined;
+      return {
+        id: fighter.id,
+        alive: fighter.alive,
+        visible: fighter.group.visible,
+        health: Math.round(fighter.health),
+        elimination: Number(fighter.elimination.toFixed(3)),
+        flinch: Number(fighter.flinch.toFixed(3)),
+        jumpCharge: Number(fighter.jumpCharge.toFixed(3)),
+        visualScaleY: Number((rig?.visual?.scale.y ?? 0).toFixed(3)),
+        visualY: Number((rig?.visual?.position.y ?? 0).toFixed(3))
+      };
+    });
+  }
+
   debugPrepareWallClimb() {
     if (location.hostname !== 'localhost') return false;
     const candidate = this.obstacleBoxes
@@ -544,6 +571,7 @@ export class NeonGame {
       } else this.player.velocity.lerp(new THREE.Vector3(0, this.player.velocity.y, 0), 1 - Math.pow(0.02, dt));
       if (this.input.consumeJump() && this.player.grounded && this.customRule('allowJump')) {
         this.player.verticalVelocity = 8.6;
+        this.player.jumpCharge = 1;
         this.player.grounded = false;
         this.player.previousGrounded = false;
         this.spawnJumpBurst(this.player.group.position, this.player.team);
@@ -678,6 +706,10 @@ export class NeonGame {
     f.fireCooldown -= dt;
     f.rollerHitCooldown = Math.max(0, f.rollerHitCooldown - dt);
     if (!f.alive) {
+      if (f.elimination > 0) {
+        animateElimination(f, dt);
+        if (f.elimination <= 0) f.group.visible = false;
+      }
       if (time >= f.respawnAt && this.customRule('allowRespawn')) this.respawn(f);
       return;
     }
@@ -707,6 +739,7 @@ export class NeonGame {
   private triggerAIJump(f: Fighter, strength: number) {
     if (!this.customRule('allowJump') || !f.grounded || f.aiJumpCooldown > 0) return false;
     f.verticalVelocity = strength;
+    f.jumpCharge = 1;
     f.grounded = false;
     f.previousGrounded = false;
     f.aiJumpCooldown = 0.8;
@@ -786,6 +819,7 @@ export class NeonGame {
       target.inkStain = Math.max(target.inkStain, 0.7 + falloff * 0.3);
       target.inkStainTeam = owner.team;
       target.hitFlash = 0.25;
+      this.applyFlinch(target, owner.group.position);
       target.velocity.add(this.scratchA.set(dx, 0, dz).normalize().multiplyScalar(4.5 + falloff * 2));
       const eliminated = target.health <= 0;
       this.spawnHitBurst(target.group.position.clone().add(new THREE.Vector3(0, 0.9, 0)), owner.team, this.scratchA, eliminated);
@@ -1029,6 +1063,7 @@ export class NeonGame {
       fighter.inkStain = Math.max(fighter.inkStain, 0.72 + falloff * 0.28);
       fighter.inkStainTeam = bomb.owner.team;
       fighter.hitFlash = 0.3;
+      this.applyFlinch(fighter, bomb.owner.group.position);
       fighter.velocity.add(this.scratchA.set(dx, 0, dz).normalize().multiplyScalar(4 + falloff * 3));
       const eliminated = fighter.health <= 0;
       this.spawnHitBurst(fighter.group.position.clone().add(new THREE.Vector3(0, 1, 0)), bomb.owner.team, this.scratchA, eliminated);
@@ -1091,6 +1126,7 @@ export class NeonGame {
           f.inkStain = 1;
           f.inkStainTeam = p.owner.team;
           f.hitFlash = 0.24;
+          this.applyFlinch(f, p.owner.group.position);
           f.velocity.add(p.velocity.clone().setY(0).normalize().multiplyScalar(p.weapon.id === 'roller' ? 4.4 : 2.1));
           remove = true;
           this.paint.paint(pos.x, pos.z, p.weapon.paintRadius * 0.7, p.owner.team, 1, p.weapon.id, p.velocity.x, p.velocity.z);
@@ -1334,7 +1370,15 @@ export class NeonGame {
 
   private eliminate(victim: Fighter, attacker: Fighter) {
     if (!this.customRule('allowDamage')) return;
-    victim.alive = false; victim.group.visible = false; victim.health = 0; victim.respawnAt = performance.now() / 1000 + 3;
+    // The body stays on the field for a short splat collapse so the splat reads clearly.
+    victim.alive = false; victim.health = 0; victim.respawnAt = performance.now() / 1000 + 3;
+    victim.elimination = 1;
+    victim.flinch = 0;
+    victim.swim = false;
+    victim.swimLevel = 0;
+    victim.surfaceClimbing = false;
+    victim.rollerHitCooldown = 0;
+    victim.aimPitch = 0;
     attacker.score += 100;
     if (attacker.isPlayer) this.kills++;
     // Splatted fighters burst into one big radial paint explosion on the ground.
@@ -1356,6 +1400,15 @@ export class NeonGame {
     this.spawnPaintSplash(pos.clone().setY(0.8), attacker.team, 1.25);
     this.spawnGroundRing(pos, attacker.team, 0.55, 4.2, 0.5);
     this.playTone(attacker.isPlayer ? 540 : 400, 0.16, 0.07);
+  }
+
+  /** Shove the fighter away from the hit source so impacts read directionally. */
+  private applyFlinch(target: Fighter, sourcePosition: THREE.Vector3) {
+    const dx = target.group.position.x - sourcePosition.x;
+    const dz = target.group.position.z - sourcePosition.z;
+    if (Math.abs(dx) + Math.abs(dz) < 0.0001) return;
+    target.flinch = 1;
+    target.flinchDir = Math.atan2(dx, dz) - target.group.rotation.y;
   }
 
   private respawn(f: Fighter) {

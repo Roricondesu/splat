@@ -308,7 +308,7 @@ export class GameUI {
     const weapon = WEAPONS.find(w => w.id === this.save.weapon)!;
     const activeTeams = liveMode ? TEAM_ORDER.slice(0, liveProcessor?.state.liveTeams ?? 4) : this.currentTeams();
     const crowdedTeams = activeTeams.length > 4;
-    const teamHud = activeTeams.map(team => `<div class="team-score team-${team}" aria-label="${TEAM_COLORS[team].name}队"><span class="team-score-label">${TEAM_COLORS[team].name}</span>${this.teamMark(TEAM_COLORS[team].css)}<b data-team-percent="${team}">0%</b></div>`).join('');
+    const teamHud = activeTeams.map(team => `<div class="team-score team-${team}" aria-label="${TEAM_COLORS[team].name}队">${this.teamMark(TEAM_COLORS[team].css)}${liveMode ? this.svgDigits('0%', { fill: '#07131f', stroke: '#07131f', className: 'hud-digits team-pct-digits', dataAttr: `data-team-percent="${team}"` }) : ''}</div>`).join('');
     const teamMeters = activeTeams.map(team => `<i data-team-meter="${team}" style="background:${TEAM_COLORS[team].css};width:${100 / activeTeams.length}%"></i>`).join('');
     this.root.innerHTML = `
       <div class="screen game-screen ${liveMode ? 'live-game-screen' : ''}">
@@ -330,7 +330,7 @@ export class GameUI {
         ${spectating ? '' : `<div class="score-chip" aria-label="占地贡献">${this.turfIcon()}${this.svgDigits('0000', { fill: '#b8ff3d', className: 'hud-digits score-digits', dataAttr: 'data-score' })}</div>`}
         <button class="pause-btn" data-pause aria-label="暂停">${this.pauseIcon()}</button>
         <div class="respawn-overlay" data-respawn aria-label="重新入场">${this.respawnIcon()}${this.svgDigits('3.0', { fill: '#ff6b2c', className: 'hud-digits respawn-digits', dataAttr: 'data-respawn-time' })}</div>
-        ${liveMode ? `<div class="live-command-help" data-live-help><b>弹幕指令</b><span>加入青队 · 商店 · 买滚筒 · 送火箭 · 涂地 · 进攻</span><button data-live-help-close>×</button></div>` : ''}
+        ${liveMode ? this.liveTutorialMarkup() : ''}
         ${spectating ? '' : `<div class="mobile-controls">
           <div class="joystick" data-stick aria-label="移动摇杆"><i data-stick-knob></i></div>
           <button class="bomb-btn" data-water-bomb aria-label="投掷水气球">${this.waterBombIcon()}</button>
@@ -340,7 +340,20 @@ export class GameUI {
         </div>`}
       </div>`;
     this.root.querySelector<HTMLElement>('[data-pause]')!.onclick = () => this.showPause();
-    if (liveMode) this.root.querySelector<HTMLElement>('[data-live-help-close]')?.addEventListener('click', event => { event.stopPropagation(); this.root.querySelector<HTMLElement>('[data-live-help]')?.classList.add('hidden'); });
+    if (liveMode) {
+      const help = this.root.querySelector<HTMLElement>('[data-live-help]');
+      const openButtons = this.root.querySelectorAll<HTMLElement>('[data-live-help-open]');
+      this.root.querySelector<HTMLElement>('[data-live-help-close]')?.addEventListener('click', event => {
+        event.stopPropagation();
+        help?.classList.add('hidden');
+        openButtons.forEach(button => button.classList.add('show'));
+      });
+      openButtons.forEach(button => button.addEventListener('click', event => {
+        event.stopPropagation();
+        help?.classList.remove('hidden');
+        openButtons.forEach(item => item.classList.remove('show'));
+      }));
+    }
     if (liveMode && liveProcessor) {
       this.liveEventUnsubscribe = liveProcessor.subscribeEvents(event => {
         const viewer = this.root.querySelector<HTMLElement>('[data-live-hud-viewers]');
@@ -400,8 +413,7 @@ export class GameUI {
     q<HTMLElement>('[data-meter-cyan]')?.style.setProperty('width', `${stats.cyan}%`);
     Object.entries(stats.teams ?? {}).forEach(([team, percent]) => {
       q<HTMLElement>(`[data-team-meter="${team}"]`)?.style.setProperty('width', `${percent}%`);
-      const percentEl = q<HTMLElement>(`[data-team-percent="${team}"]`);
-      if (percentEl) percentEl.textContent = `${Math.round(percent)}%`;
+      this.updateDigits(q<SVGSVGElement>(`[data-team-percent="${team}"]`), `${Math.round(percent)}%`);
     });
     this.updateDigits(q<SVGSVGElement>('[data-ammo-text]'), `${Math.round(stats.ammo)}`);
     const ammoRatio = Math.max(0, Math.min(100, stats.ammo)) / 100;
@@ -616,8 +628,24 @@ export class GameUI {
     this.bindCommon();
   }
 
-  private currentTeams
-() {
+  private liveTutorialMarkup() {
+    return `<aside class="live-command-help" data-live-help aria-label="直播弹幕指令教程">
+      <div class="live-help-head"><div><b>弹幕指令手册</b><small>观众发送短指令，实时影响直播战场</small></div><button data-live-help-close aria-label="关闭教程">×</button></div>
+      <div class="live-help-grid">
+        <section><h4>加入队伍</h4><p><code>加入青队</code> <code>报名2队</code> <code>加紫队</code></p><small>可用青、橙、酸柠、紫电、莓红、金黄队；转队会重置准备状态。</small></section>
+        <section><h4>准备与退出</h4><p><code>准备</code> <code>就绪</code> <code>退出</code></p><small>开战前报名；未选队观众会在开始时自动分队。</small></section>
+        <section><h4>查询信息</h4><p><code>商店</code> <code>我的</code> <code>余额</code> <code>段位</code> <code>榜单</code></p><small>先发送“商店”查看可购买的武器、服装和发型。</small></section>
+        <section><h4>购买与装备</h4><p><code>买滚筒</code> <code>购买双马尾</code><br/><code>用滚筒</code> <code>戴双马尾</code></p><small>购买后还要单独发送装备指令；余额不足会失败。</small></section>
+        <section><h4>礼物强化</h4><p><code>送爱心</code> <code>送能量2</code> <code>送火箭3</code></p><small>爱心 +3、能量 +10、火箭 +30；礼物强化有效但有上限。</small></section>
+        <section><h4>战术指令</h4><p><code>涂地</code> <code>进攻</code> <code>冲锋</code> <code>防守</code> <code>潜墨</code></p><small>用于直播战术反馈和弹幕流提示。</small></section>
+        <section><h4>水气球行动</h4><p><code>水气球</code> <code>水球</code> <code>炸弹</code></p><small>登记一次行动消耗 25 霓虹币，余额不足时不会生效。</small></section>
+        <section class="host-only"><h4>主播控制</h4><p><code>开报名</code> <code>关报名</code><br/><code>开始直播</code> <code>结束直播</code></p><small>仅主播或管理员可用；不限时直播请发送“结束直播”收官。</small></section>
+      </div>
+      <div class="live-help-foot"><span>支持空格和常见标点</span><span>不识别时发送“商店”</span><button data-live-help-open>重新打开指令手册</button></div>
+    </aside><button class="live-help-open" data-live-help-open aria-label="打开弹幕指令手册">?</button>`;
+  }
+
+  private currentTeams() {
     if (this.save.arena === 'custom') return TEAM_ORDER.slice(0, this.save.customMode.teamCount);
     return ['cyan', 'orange'] as const;
   }

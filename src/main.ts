@@ -45,6 +45,8 @@ function beginGame(spectating = false, liveProfiles: LiveProfile[] = [], liveRoo
         firePlayer: () => game?.debugFirePlayer(),
         throwWaterBomb: () => game?.debugThrowWaterBomb(),
         prepareWallClimb: () => game?.debugPrepareWallClimb(),
+        eliminateNearestAi: () => game?.debugEliminateNearestAi(),
+        fighterAnimation: () => game?.debugFighterAnimation(),
         weaponSpecs: () => WEAPONS.map(weapon => ({ ...weapon }))
       }
     });
