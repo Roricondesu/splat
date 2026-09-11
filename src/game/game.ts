@@ -20,6 +20,8 @@ interface Projectile {
   previousPosition: THREE.Vector3;
   tail: THREE.Mesh[];
   intent: 'paint' | 'fight';
+  /** Fighter ids already damaged by this projectile, so piercing hits each enemy once. */
+  hitTargets: Set<number>;
 }
 
 interface SurfaceInkSample {
@@ -413,7 +415,7 @@ export class NeonGame {
 
   /** Snapshot of per-fighter animation state for regression checks. */
   debugFighterAnimation() {
-    return this.fighters.slice(0, 10).map(fighter => {
+    return this.fighters.map(fighter => {
       const rig = fighter.group.userData.rig as { visual?: THREE.Object3D } | undefined;
       return {
         id: fighter.id,
@@ -813,7 +815,7 @@ export class NeonGame {
       const distance = Math.hypot(dx, dz);
       if (distance > damageRadius) continue;
       const falloff = 1 - distance / damageRadius;
-      const damage = Math.round(26 + falloff * 34);
+      const damage = this.applyWeaponShield(target, dx, dz, Math.round(26 + falloff * 34));
       if (this.customRule('allowDamage') && !(target.isPlayer && this.save.infiniteHealth)) target.health -= damage;
       target.lastDamagedAt = this.elapsed;
       target.inkStain = Math.max(target.inkStain, 0.7 + falloff * 0.3);
@@ -969,7 +971,8 @@ export class NeonGame {
         weapon: w,
         previousPosition: mesh.position.clone(),
         tail,
-        intent
+        intent,
+        hitTargets: new Set<number>()
       });
     }
     if (f.isPlayer || this.elapsed - this.lastAISoundAt > 0.075) {
@@ -1114,13 +1117,15 @@ export class NeonGame {
       const worldHalf = this.arena.worldSize * 0.5;
       let remove = Boolean(surfaceHit) || p.life <= 0 || pos.y <= 0.12 || Math.abs(pos.x) > worldHalf || Math.abs(pos.z) > worldHalf;
       if (surfaceHit) pos.copy(surfaceHit.point);
+      let directHitId = -1;
       for (const f of this.fighters) {
         if (f.team === p.owner.team || !f.alive || f.id === p.owner.id) continue;
+        if (p.hitTargets.has(f.id)) continue;
         const dx = f.group.position.x - pos.x;
         const dy = f.group.position.y + 1 - pos.y;
         const dz = f.group.position.z - pos.z;
         if (dx * dx + dy * dy + dz * dz < 0.7396) {
-          const damage = p.weapon.damage;
+          const damage = this.applyWeaponShield(f, p.velocity.x, p.velocity.z, p.weapon.damage);
           if (this.customRule('allowDamage') && !(f.isPlayer && this.save.infiniteHealth)) f.health -= damage;
           f.lastDamagedAt = this.elapsed;
           f.inkStain = 1;
@@ -1128,17 +1133,22 @@ export class NeonGame {
           f.hitFlash = 0.24;
           this.applyFlinch(f, p.owner.group.position);
           f.velocity.add(p.velocity.clone().setY(0).normalize().multiplyScalar(p.weapon.id === 'roller' ? 4.4 : 2.1));
-          remove = true;
+          p.hitTargets.add(f.id);
+          directHitId = f.id;
           this.paint.paint(pos.x, pos.z, p.weapon.paintRadius * 0.7, p.owner.team, 1, p.weapon.id, p.velocity.x, p.velocity.z);
           const eliminated = f.health <= 0;
           this.spawnHitBurst(pos, p.owner.team, p.velocity, eliminated);
           if (p.owner.isPlayer) this.callbacks.onHit(damage, eliminated);
           if (f.isPlayer) { this.playTone(105, 0.12, 0.07); this.cameraShake = Math.max(this.cameraShake, 0.32); }
           if (eliminated) this.eliminate(f, p.owner);
-          break;
+          if (!p.weapon.pierce) {
+            remove = true;
+            break;
+          }
         }
       }
       if (remove) {
+        this.explodeProjectileSplash(p, pos, directHitId);
         const radius = p.weapon.paintRadius * (p.weapon.id === 'burst' ? 1.25 : 1);
         if (surfaceHit) this.paintSurfaceHit(surfaceHit, p.owner.team, radius, p.weapon.id);
         // Fast hits leave a directional streak splat instead of a round dot.
@@ -1409,6 +1419,114 @@ export class NeonGame {
     if (Math.abs(dx) + Math.abs(dz) < 0.0001) return;
     target.flinch = 1;
     target.flinchDir = Math.atan2(dx, dz) - target.group.rotation.y;
+  }
+
+  /**
+   * Guard weapons absorb part of the damage when the blow comes from the front.
+   * `incomingX/Z` is the direction the attack travels; frontal means it points
+   * against the fighter's facing vector.
+   */
+  private applyWeaponShield(target: Fighter, incomingX: number, incomingZ: number, damage: number) {
+    const shield = target.weapon.shield;
+    if (!shield || damage <= 0) return damage;
+    const incomingLength = Math.hypot(incomingX, incomingZ);
+    if (incomingLength < 0.0001) return damage;
+    const forwardX = Math.sin(target.group.rotation.y);
+    const forwardZ = Math.cos(target.group.rotation.y);
+    const frontness = -(forwardX * (incomingX / incomingLength) + forwardZ * (incomingZ / incomingLength));
+    if (frontness < 0.25) return damage;
+    return Math.max(1, Math.round(damage * (1 - shield)));
+  }
+
+  /** Area weapons deal splash damage around the impact point (色爆胶囊's 爆裂). */
+  private explodeProjectileSplash(projectile: Projectile, position: THREE.Vector3, directHitId: number) {
+    const blastRadius = projectile.weapon.explodeRadius;
+    if (!blastRadius || !this.customRule('allowDamage')) return;
+    for (const fighter of this.fighters) {
+      if (fighter.team === projectile.owner.team || !fighter.alive || fighter.id === directHitId) continue;
+      const distance = Math.hypot(fighter.group.position.x - position.x, fighter.group.position.z - position.z);
+      if (distance > blastRadius) continue;
+      if (fighter.isPlayer && this.save.infiniteHealth) continue;
+      const falloff = 1 - distance / blastRadius;
+      const damage = Math.round(projectile.weapon.damage * (0.28 + 0.42 * falloff));
+      fighter.health -= damage;
+      fighter.lastDamagedAt = this.elapsed;
+      fighter.inkStain = Math.max(fighter.inkStain, 0.7);
+      fighter.inkStainTeam = projectile.owner.team;
+      fighter.hitFlash = 0.26;
+      this.applyFlinch(fighter, position);
+      const eliminated = fighter.health <= 0;
+      if (projectile.owner.isPlayer && eliminated) this.callbacks.onHit(damage, true);
+      if (eliminated) this.eliminate(fighter, projectile.owner);
+    }
+    this.spawnGroundRing(position.clone().setY(0.1), projectile.owner.team, 0.7, blastRadius * 1.5, 0.45);
+  }
+
+  /** Switch the player's weapon (stats only; visual model is unchanged). */
+  debugSetPlayerWeapon(id: string) {
+    if (location.hostname !== 'localhost') return false;
+    const weapon = WEAPONS.find(item => item.id === id);
+    if (!weapon) return false;
+    this.player.weapon = weapon;
+    return true;
+  }
+
+  /**
+   * Line two enemy AI up on the aim line and fire the charger through both.
+   * Returns the two fighter ids so the test can assert both took damage.
+   */
+  debugSetupPiercingProbe() {
+    if (location.hostname !== 'localhost') return null;
+    const charger = WEAPONS.find(item => item.id === 'charger');
+    if (!charger) return null;
+    this.player.weapon = charger;
+    const forward = this.aimDirection();
+    forward.y = 0;
+    if (forward.lengthSq() < 0.0001) forward.set(0, 0, -1);
+    forward.normalize();
+    const enemies = this.fighters.filter(item => !item.isPlayer && item.alive && item.team !== this.player.team).slice(0, 2);
+    if (enemies.length < 2) return null;
+    enemies.forEach((enemy, index) => {
+      enemy.group.position.copy(this.player.group.position).addScaledVector(forward, 7 + index * 7).setY(this.player.group.position.y);
+      enemy.velocity.set(0, 0, 0);
+      enemy.verticalVelocity = 0;
+      enemy.grounded = true;
+      enemy.swim = false;
+      enemy.swimLevel = 0;
+      enemy.surfaceClimbing = false;
+      enemy.health = 100;
+      enemy.alive = true;
+      enemy.group.visible = true;
+      enemy.aiMode = 'paint';
+      enemy.thinkCooldown = 6;
+      enemy.aiCommitUntil = 6;
+      enemy.aiTarget.copy(enemy.group.position);
+    });
+    const muzzle = this.player.group.position.clone().add(new THREE.Vector3(0, 1.15, 0));
+    const aim = enemies[0].group.position.clone().add(new THREE.Vector3(0, 1, 0)).sub(muzzle).normalize();
+    this.player.fireCooldown = 0;
+    this.tryFire(this.player, aim);
+    return { placed: enemies.map(enemy => enemy.id), weapon: 'charger' };
+  }
+
+  /** Damage the shield math returns for a frontal vs rear hit with the base damage. */
+  debugShieldProbe(baseDamage = 17) {
+    if (location.hostname !== 'localhost') return null;
+    const umbrella = WEAPONS.find(item => item.id === 'umbrella');
+    if (!umbrella) return null;
+    const previousWeapon = this.player.weapon;
+    const previousHealth = this.player.health;
+    this.player.health = 100;
+    this.player.weapon = umbrella;
+    const yaw = this.player.group.rotation.y;
+    // A frontal shot travels against the facing vector; a rear shot travels with it.
+    const frontX = -Math.sin(yaw);
+    const frontZ = -Math.cos(yaw);
+    const front = this.applyWeaponShield(this.player, frontX, frontZ, baseDamage);
+    const rear = this.applyWeaponShield(this.player, -frontX, -frontZ, baseDamage);
+    this.player.weapon = previousWeapon;
+    this.player.health = previousHealth;
+    return { front, rear, baseDamage };
   }
 
   private respawn(f: Fighter) {

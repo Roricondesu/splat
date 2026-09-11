@@ -68,17 +68,23 @@ export interface WeaponSpec {
   trailPaint?: number;
   /** Projectile scale multiplier so each weapon reads differently in flight. */
   projectileScale?: number;
+  /** Projectile keeps flying through enemies, damaging each one once. */
+  pierce?: boolean;
+  /** Fraction of frontal damage absorbed while the guard faces the incoming shot. */
+  shield?: number;
+  /** Radius of the splash damage dealt where the projectile lands. */
+  explodeRadius?: number;
 }
 
 export const WEAPONS: WeaponSpec[] = [
   { id: 'pulse', name: '脉冲喷笔', subtitle: '均衡连射', icon: '◈', fireRate: 0.11, damage: 17, range: 24, spread: 0.055, paintRadius: 1.35, projectileSpeed: 34, ammoCost: 4.2, automatic: true, color: '#16e0d0' },
   { id: 'roller', name: '霓虹滚筒', subtitle: '近战铺色', icon: '▰', fireRate: 0.55, damage: 48, range: 5.8, spread: 0.32, paintRadius: 2.5, projectileSpeed: 22, ammoCost: 14, automatic: false, color: '#b8ff3d', pellets: 5, trailPaint: 1.8 },
   { id: 'bucket', name: '涂浪桶', subtitle: '抛射范围', icon: '◒', fireRate: 0.68, damage: 38, range: 17, spread: 0.12, paintRadius: 2.25, projectileSpeed: 22, ammoCost: 12, automatic: false, color: '#8c7dff', arcing: true, pellets: 3 },
-  { id: 'burst', name: '色爆胶囊', subtitle: '区域爆裂', icon: '✦', fireRate: 0.9, damage: 52, range: 20, spread: 0.045, paintRadius: 3.1, projectileSpeed: 19, ammoCost: 18, automatic: false, color: '#ff6b2c', arcing: true, projectileScale: 1.35 },
-  { id: 'charger', name: '蓄能水枪', subtitle: '远程穿透', icon: '⌖', fireRate: 1.02, damage: 74, range: 40, spread: 0.006, paintRadius: 1.05, projectileSpeed: 62, ammoCost: 15, automatic: false, color: '#7ce7ff', speedScale: 0.9, projectileScale: 1.1 },
+  { id: 'burst', name: '色爆胶囊', subtitle: '区域爆裂', icon: '✦', fireRate: 0.9, damage: 52, range: 20, spread: 0.045, paintRadius: 3.1, projectileSpeed: 19, ammoCost: 18, automatic: false, color: '#ff6b2c', arcing: true, projectileScale: 1.35, explodeRadius: 3.6 },
+  { id: 'charger', name: '蓄能水枪', subtitle: '远程穿透', icon: '⌖', fireRate: 1.02, damage: 74, range: 40, spread: 0.006, paintRadius: 1.05, projectileSpeed: 62, ammoCost: 15, automatic: false, color: '#7ce7ff', speedScale: 0.9, projectileScale: 1.1, pierce: true },
   { id: 'scatter', name: '散彩双枪', subtitle: '近身爆发', icon: '❋', fireRate: 0.2, damage: 12, range: 11, spread: 0.2, paintRadius: 1.15, projectileSpeed: 27, ammoCost: 3.4, automatic: true, color: '#ffd23f', pellets: 2, speedScale: 1.1 },
   { id: 'brush', name: '疾风涂刷', subtitle: '高速贴地', icon: '≡', fireRate: 0.075, damage: 9, range: 6.4, spread: 0.26, paintRadius: 1.05, projectileSpeed: 25, ammoCost: 2.1, automatic: true, color: '#ff8fd0', speedScale: 1.24, trailPaint: 2.2 },
-  { id: 'umbrella', name: '喷射护伞', subtitle: '扇形压制', icon: '☂', fireRate: 0.62, damage: 26, range: 14, spread: 0.17, paintRadius: 2.0, projectileSpeed: 18, ammoCost: 10, automatic: false, color: '#9d7bff', arcing: true, pellets: 4, speedScale: 0.96 }
+  { id: 'umbrella', name: '喷射护伞', subtitle: '扇形压制', icon: '☂', fireRate: 0.62, damage: 26, range: 14, spread: 0.17, paintRadius: 2.0, projectileSpeed: 18, ammoCost: 10, automatic: false, color: '#9d7bff', arcing: true, pellets: 4, speedScale: 0.96, shield: 0.35 }
 ];
 
 export interface OutfitSpec {

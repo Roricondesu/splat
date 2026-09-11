@@ -47,6 +47,9 @@ function beginGame(spectating = false, liveProfiles: LiveProfile[] = [], liveRoo
         prepareWallClimb: () => game?.debugPrepareWallClimb(),
         eliminateNearestAi: () => game?.debugEliminateNearestAi(),
         fighterAnimation: () => game?.debugFighterAnimation(),
+        setPlayerWeapon: (id: string) => game?.debugSetPlayerWeapon(id),
+        setupPiercingProbe: () => game?.debugSetupPiercingProbe(),
+        shieldProbe: (baseDamage?: number) => game?.debugShieldProbe(baseDamage),
         weaponSpecs: () => WEAPONS.map(weapon => ({ ...weapon }))
       }
     });
