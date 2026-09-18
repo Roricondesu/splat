@@ -54,6 +54,10 @@ const BODY_RADIUS = 0.42;
 const FP_WEAPON_OFFSET = new THREE.Vector3(0.33, -0.34, -0.72);
 const FP_WEAPON_SCALE = 0.7;
 
+/** Spectator camera zoom range: close enough to follow one duel, far enough for the whole map. */
+const SPECTATOR_MIN_DISTANCE = 8;
+const SPECTATOR_MAX_DISTANCE = 140;
+
 export interface GameStats {
   time: number;
   cyan: number;
@@ -154,6 +158,8 @@ export class NeonGame {
   private spectatorBoundsTimer = 0;
   private spectatorAliveCount = 0;
   private spectatorInitialized = false;
+  private spectatorFree = false;
+  private readonly spectatorPan = new THREE.Vector3();
   private detailLodTimer = 0;
   private firstPerson = false;
   private firstPersonPitch = 0;
@@ -287,6 +293,8 @@ export class NeonGame {
     if (enabled) {
       // Spectating is always a third-person overview, never first-person eyes.
       if (this.firstPerson) this.setViewMode('third');
+      this.spectatorFree = false;
+      this.spectatorInitialized = false;
       this.player.isPlayer = false;
       this.player.aiMode = 'paint';
       this.player.thinkCooldown = 0;
@@ -734,7 +742,7 @@ export class NeonGame {
     this.matchTime -= dt;
     if (this.matchTime <= 0) { this.finish(); return; }
     this.input.update();
-    if (this.spectatorMode) this.updateSpectatorInput();
+    if (this.spectatorMode) this.updateSpectatorInput(dt);
     else this.updatePlayer(dt);
     for (const fighter of this.fighters) {
       if (!fighter.isPlayer) this.updateAI(fighter, dt);
@@ -754,12 +762,49 @@ export class NeonGame {
     if (this.elapsed - this.lastStatsAt > 0.12) { this.lastStatsAt = this.elapsed; this.emitStats(); }
   }
 
-  private updateSpectatorInput() {
+  private updateSpectatorInput(dt: number) {
     const look = this.input.consumeLook();
-    this.spectatorYaw -= look.x * 0.0016 * this.save.sensitivity;
-    this.spectatorPitch = THREE.MathUtils.clamp(this.spectatorPitch - look.y * 0.0014 * this.save.sensitivity, 0.72, 1.38);
-    const maxDistance = this.arena.worldSize > 50 ? 68 : 42;
-    this.spectatorDistance = THREE.MathUtils.clamp(this.spectatorDistance - this.input.state.moveY * 0.18, 23, maxDistance);
+    if (!this.input.pinching) {
+      this.spectatorYaw -= look.x * 0.0016 * this.save.sensitivity;
+      this.spectatorPitch = THREE.MathUtils.clamp(this.spectatorPitch - look.y * 0.0014 * this.save.sensitivity, 0.18, 1.5);
+    }
+
+    const panX = this.input.state.moveX;
+    const panY = this.input.state.moveY;
+    const zoom = this.input.consumeZoom();
+
+    // Any manual input unlocks the camera from the auto-framed overview.
+    if (panX !== 0 || panY !== 0 || zoom !== 0) this.spectatorFree = true;
+    // Space (or F) snaps back to framing the whole battle.
+    if (this.input.consumeJump()) this.recenterSpectatorCamera();
+
+    if (zoom !== 0) {
+      const zoomSpeed = this.input.pinching ? 0.05 : 0.045;
+      this.spectatorDistance = THREE.MathUtils.clamp(this.spectatorDistance + zoom * zoomSpeed, SPECTATOR_MIN_DISTANCE, SPECTATOR_MAX_DISTANCE);
+    }
+
+    if (this.spectatorFree && (panX !== 0 || panY !== 0)) {
+      // Pan across the field in the direction the camera is facing.
+      const speed = Math.max(14, this.spectatorDistance * 0.9) * dt;
+      const forwardX = -Math.sin(this.spectatorYaw);
+      const forwardZ = -Math.cos(this.spectatorYaw);
+      const rightX = Math.cos(this.spectatorYaw);
+      const rightZ = -Math.sin(this.spectatorYaw);
+      this.spectatorPan.x += (forwardX * panY + rightX * panX) * speed;
+      this.spectatorPan.z += (forwardZ * panY + rightZ * panX) * speed;
+      const limit = this.arena.worldSize * 0.62;
+      this.spectatorPan.x = THREE.MathUtils.clamp(this.spectatorPan.x, -limit, limit);
+      this.spectatorPan.z = THREE.MathUtils.clamp(this.spectatorPan.z, -limit, limit);
+    }
+  }
+
+  /** Hand the camera back to the automatic whole-battle framing. */
+  recenterSpectatorCamera() {
+    if (!this.spectatorMode) return false;
+    this.spectatorFree = false;
+    this.spectatorDistance = 32;
+    this.spectatorPan.copy(this.spectatorFocus);
+    return true;
   }
 
   private updatePlayer(dt: number) {
@@ -1705,6 +1750,24 @@ export class NeonGame {
     this.spawnGroundRing(position.clone().setY(0.1), projectile.owner.team, 0.7, blastRadius * 1.5, 0.45);
   }
 
+  /** Spectator camera readout for regression checks. */
+  debugSpectatorCamera() {
+    return {
+      spectator: this.spectatorMode,
+      free: this.spectatorFree,
+      distance: Number(this.spectatorDistance.toFixed(2)),
+      focus: { x: Number(this.spectatorFocus.x.toFixed(2)), z: Number(this.spectatorFocus.z.toFixed(2)) },
+      pan: { x: Number(this.spectatorPan.x.toFixed(2)), z: Number(this.spectatorPan.z.toFixed(2)) },
+      camera: {
+        x: Number(this.camera.position.x.toFixed(2)),
+        y: Number(this.camera.position.y.toFixed(2)),
+        z: Number(this.camera.position.z.toFixed(2))
+      },
+      yaw: Number(this.spectatorYaw.toFixed(3)),
+      pitch: Number(this.spectatorPitch.toFixed(3))
+    };
+  }
+
   /** Battle royale readout for regression checks. */
   debugBattleRoyale() {
     return {
@@ -1970,17 +2033,31 @@ export class NeonGame {
       }
       if (!this.spectatorInitialized) {
         this.spectatorFocus.copy(this.spectatorTarget);
+        this.spectatorPan.copy(this.spectatorTarget);
         this.spectatorInitialized = true;
       }
-      const focusBlend = 1 - Math.pow(0.12, dt);
-      const radiusBlend = 1 - Math.pow(0.2, dt);
-      this.spectatorFocus.lerp(this.spectatorTarget, focusBlend);
-      const maxSpectatorDistance = this.arena.worldSize > 50 ? (this.liveMode ? 82 : 68) : (this.liveMode ? 52 : 44);
-      const fittedDistance = THREE.MathUtils.clamp(Math.max(this.spectatorDistance, this.spectatorRadius * 1.55), 26, maxSpectatorDistance);
-      const horizontal = Math.cos(this.spectatorPitch) * fittedDistance;
+
+      let distance: number;
+      if (this.spectatorFree) {
+        // Manual control: the player owns the focus point and the zoom level.
+        this.spectatorFocus.lerp(this.spectatorPan, 1 - Math.pow(0.02, dt));
+        distance = this.spectatorDistance;
+      } else {
+        // Automatic overview: keep every squad in frame.
+        this.spectatorFocus.lerp(this.spectatorTarget, 1 - Math.pow(0.12, dt));
+        this.spectatorPan.copy(this.spectatorFocus);
+        const maxSpectatorDistance = this.arena.worldSize > 50 ? (this.liveMode ? 82 : 84) : (this.liveMode ? 52 : 46);
+        distance = THREE.MathUtils.clamp(Math.max(this.spectatorDistance, this.spectatorRadius * 1.55), 26, maxSpectatorDistance);
+      }
+
+      // Zooming in close lowers the angle, otherwise a tight shot is just top-down ink.
+      const basePitch = this.spectatorFree
+        ? THREE.MathUtils.lerp(0.52, this.spectatorPitch, THREE.MathUtils.clamp((distance - 14) / 42, 0, 1))
+        : this.spectatorPitch;
+      const horizontal = Math.cos(basePitch) * distance;
       this.scratchA.set(
         Math.sin(this.spectatorYaw) * horizontal,
-        Math.sin(this.spectatorPitch) * fittedDistance,
+        Math.sin(basePitch) * distance,
         Math.cos(this.spectatorYaw) * horizontal
       ).add(this.spectatorFocus);
       this.camera.position.lerp(this.scratchA, 1 - Math.pow(0.035, dt));
@@ -2031,6 +2108,7 @@ export class NeonGame {
     this.player.thinkCooldown = 9999;
     this.spectatorYaw = 0.65;
     this.spectatorPitch = 1.08;
+    this.spectatorFree = false;
     this.spectatorDistance = Math.max(32, this.arena.worldSize * 0.58);
     this.spectatorInitialized = false;
     this.paused = false;

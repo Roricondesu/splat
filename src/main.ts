@@ -34,6 +34,7 @@ function beginGame(spectating = false, liveProfiles: LiveProfile[] = [], liveRoo
   }, liveProfiles, liveRoom, live, brOptions);
   game.bindMobileControls(app);
   game.setSpectatorMode(spectating);
+  if (spectating) ui.toast('观战：WASD 平移 · 滚轮/双指缩放 · 拖动转视角 · 空格或 F 回到全景');
   if (location.hostname === 'localhost') {
     Object.assign(window, {
       __neonDebug: {
@@ -55,6 +56,8 @@ function beginGame(spectating = false, liveProfiles: LiveProfile[] = [], liveRoo
         viewState: () => game?.debugViewState(),
         setViewMode: (mode: 'first' | 'third') => game?.setViewMode(mode),
         battleRoyale: () => game?.debugBattleRoyale(),
+        spectatorCamera: () => game?.debugSpectatorCamera(),
+        recenterSpectator: () => game?.recenterSpectatorCamera(),
         collapseZone: () => game?.debugCollapseZone(),
         placePlayerOutsideZone: () => game?.debugPlacePlayerOutsideZone(),
         eliminateAllButOneTeam: () => game?.debugEliminateAllButOneTeam(),
@@ -78,6 +81,12 @@ window.addEventListener('keydown', e => {
     ui.save.viewMode = next;
     ui.persist();
     ui.toast(next === 'first' ? '已切换：第一人称' : '已切换：第三人称');
+    return;
+  }
+  // F returns the spectator camera to the automatic whole-battle framing.
+  if (e.code === 'KeyF' && game?.isRunning && !game.isPaused && game.isSpectating) {
+    game.recenterSpectatorCamera();
+    ui.toast('已回到全景跟随');
   }
 });
 

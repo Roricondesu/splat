@@ -31,6 +31,10 @@ export class InputController {
   private mobileStick?: HTMLElement;
   private mobileKnob?: HTMLElement;
   private disposers: Array<() => void> = [];
+  /** Accumulated zoom intent from the mouse wheel or a two-finger pinch. */
+  private zoomDelta = 0;
+  private pinchPointers = new Map<number, { x: number; y: number }>();
+  private pinchDistance = 0;
 
   private listen<T extends EventTarget>(target: T, type: string, handler: EventListenerOrEventListenerObject, options?: AddEventListenerOptions | boolean) {
     target.addEventListener(type, handler, options);
@@ -52,6 +56,12 @@ export class InputController {
       }
     });
     this.listen(window, 'keyup', (event: Event) => this.keys.delete((event as KeyboardEvent).code));
+    // Wheel and pinch feed the same zoom accumulator used by the spectator camera.
+    this.listen(this.surface, 'wheel', (event: Event) => {
+      const e = event as WheelEvent;
+      e.preventDefault();
+      this.zoomDelta += e.deltaY;
+    }, { passive: false });
     this.listen(this.surface, 'pointerdown', (event: Event) => {
       const e = event as PointerEvent;
       const target = e.target as HTMLElement;
@@ -59,6 +69,16 @@ export class InputController {
       if (e.pointerType === 'touch' || e.pointerType === 'pen' || e.pointerType === 'mouse') {
         if (e.pointerType === 'mouse' && e.button !== 0 && e.button !== 2) return;
         e.preventDefault();
+        if (e.pointerType !== 'mouse') {
+          this.pinchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+          if (this.pinchPointers.size === 2) {
+            // A second finger takes over for zooming; stop steering the camera.
+            this.pinchDistance = this.currentPinchDistance();
+            this.swipeLookId = null;
+            this.swipePointerType = null;
+            return;
+          }
+        }
         if (this.joystickMode === 'floating' && e.pointerType !== 'mouse' && e.clientX < innerWidth * 0.46) {
           this.startFloatingStick(e.pointerId, e.clientX, e.clientY);
           return;
@@ -73,6 +93,17 @@ export class InputController {
     });
     this.listen(this.surface, 'pointermove', (event: Event) => {
       const e = event as PointerEvent;
+      if (e.pointerType !== 'mouse' && this.pinchPointers.has(e.pointerId)) {
+        this.pinchPointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (this.pinchPointers.size >= 2) {
+          e.preventDefault();
+          const distance = this.currentPinchDistance();
+          // Fingers spreading apart (larger distance) means zooming in.
+          this.zoomDelta += (this.pinchDistance - distance) * 2.4;
+          this.pinchDistance = distance;
+          return;
+        }
+      }
       if (e.pointerId === this.floatingMovePointerId) {
         e.preventDefault();
         this.updateFloatingStick(e.clientX, e.clientY);
@@ -86,6 +117,10 @@ export class InputController {
       this.lastSwipeY = e.clientY;
     });
     const stopSwipeLook = (e: PointerEvent) => {
+      if (this.pinchPointers.has(e.pointerId)) {
+        this.pinchPointers.delete(e.pointerId);
+        this.pinchDistance = this.currentPinchDistance();
+      }
       if (e.pointerId === this.floatingMovePointerId) {
         this.resetFloatingStick();
         return;
@@ -251,6 +286,22 @@ export class InputController {
     const v = { x: this.state.lookX, y: this.state.lookY };
     this.state.lookX = 0; this.state.lookY = 0;
     return v;
+  }
+
+  /** Positive means zoom out. Fed by the mouse wheel and two-finger pinch. */
+  consumeZoom() {
+    const delta = this.zoomDelta;
+    this.zoomDelta = 0;
+    return delta;
+  }
+
+  /** True while two fingers are down, so the camera can ignore look input. */
+  get pinching() { return this.pinchPointers.size >= 2; }
+
+  private currentPinchDistance() {
+    const points = [...this.pinchPointers.values()];
+    if (points.length < 2) return 0;
+    return Math.hypot(points[0].x - points[1].x, points[0].y - points[1].y);
   }
 
   bindMobileControls(root: HTMLElement) {

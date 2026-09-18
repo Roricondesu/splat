@@ -137,7 +137,13 @@ try {
   await page.click('[data-action="spectate"]');
   await page.waitForSelector('#game-canvas');
   await page.waitForTimeout(6500);
-  const spectatorState = await page.evaluate(() => window.__neonDebug?.state());
+  let spectatorState = await page.evaluate(() => window.__neonDebug?.state());
+  // AI only jump when an obstacle blocks the path, so give them a window to meet one
+  // rather than demanding a jump from a single fixed-time sample.
+  for (let attempt = 0; attempt < 45 && (spectatorState?.aiJumpCount ?? 0) < 1; attempt++) {
+    await page.waitForTimeout(200);
+    spectatorState = await page.evaluate(() => window.__neonDebug?.state());
+  }
   const spectatorBadgeVisible = await page.locator('.spectator-badge,.score-chip.spectator-only').count() === 0;
   const spectatorControls = await page.locator('.mobile-controls,[data-stick],[data-fire],[data-submerge],[data-dash],[data-jump]').count();
   if (spectatorControls !== 0) throw new Error(`Spectator controls are still rendered: ${spectatorControls}`);
