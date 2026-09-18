@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
 import { ArenaBuild, createArena } from './arena';
-import { Difficulty, HAIRSTYLES, HairstyleId, ArenaId, OUTFITS, SaveData, TEAM_COLORS, TEAM_ORDER, Team, WEAPONS, WeaponSpec } from './config';
-import { animateElimination, animateFighter, createFighter, Fighter, resetFighterPose } from './fighter';
+import { Difficulty, HAIRSTYLES, HairstyleId, ArenaId, OUTFITS, SaveData, TEAM_COLORS, TEAM_ORDER, Team, WEAPONS, WeaponId, WeaponSpec } from './config';
+import { animateElimination, animateFighter, createFighter, Fighter, makeWeapon, resetFighterPose } from './fighter';
 import { InputController } from './input';
 import { PaintField } from './paintField';
 import type { LiveEvent, LiveProfile } from '../live/live';
@@ -49,6 +49,10 @@ interface CombatEffect {
 
 /** Horizontal half-width of a fighter, used by height-aware collision. */
 const BODY_RADIUS = 0.42;
+
+/** First-person view-model placement, in camera space. */
+const FP_WEAPON_OFFSET = new THREE.Vector3(0.33, -0.34, -0.72);
+const FP_WEAPON_SCALE = 0.7;
 
 export interface GameStats {
   time: number;
@@ -131,6 +135,10 @@ export class NeonGame {
   private spectatorBoundsTimer = 0;
   private spectatorAliveCount = 0;
   private spectatorInitialized = false;
+  private firstPerson = false;
+  private firstPersonPitch = 0;
+  private firstPersonWeaponId: WeaponId | null = null;
+  private readonly firstPersonAnchor = new THREE.Group();
   private readonly projectileGeometries: Record<'small' | 'large' | 'tailSmall' | 'tailLarge', THREE.BufferGeometry>;
   private readonly projectileMaterials: Record<Team, THREE.MeshToonMaterial>;
   private readonly tailMaterials: Record<Team, THREE.MeshBasicMaterial>;
@@ -175,6 +183,9 @@ export class NeonGame {
     this.difficulty = save.difficulty;
     this.createTeams();
     this.unsubscribeLiveEvents = this.liveEvents?.subscribeEvents(event => this.handleLiveEvent(event));
+    // The camera joins the scene graph so first-person view-model children render.
+    this.scene.add(this.camera);
+    if (!this.liveMode && save.viewMode === 'first') this.setViewMode('first');
     this.resize();
     window.addEventListener('resize', this.resize);
   }
@@ -241,6 +252,8 @@ export class NeonGame {
   setSpectatorMode(enabled: boolean) {
     this.spectatorMode = enabled;
     if (enabled) {
+      // Spectating is always a third-person overview, never first-person eyes.
+      if (this.firstPerson) this.setViewMode('third');
       this.player.isPlayer = false;
       this.player.aiMode = 'paint';
       this.player.thinkCooldown = 0;
@@ -279,6 +292,66 @@ export class NeonGame {
   setPaused(v: boolean) { this.paused = v; }
   get isPaused() { return this.paused; }
   get isRunning() { return this.running; }
+  get isSpectating() { return this.spectatorMode; }
+
+  /**
+   * Switch the battle camera between the third-person follow rig and first-person eyes.
+   * Spectator and live modes always stay third-person.
+   */
+  setViewMode(mode: 'first' | 'third') {
+    const wantsFirst = mode === 'first' && !this.spectatorMode;
+    this.firstPerson = wantsFirst;
+    // A slightly wider lens reads better from inside the character's eyes.
+    const wantedFov = wantsFirst ? 72 : 58;
+    if (this.camera.fov !== wantedFov) {
+      this.camera.fov = wantedFov;
+      this.camera.updateProjectionMatrix();
+    }
+    if (wantsFirst) {
+      this.firstPersonPitch = 0;
+      this.scene.add(this.camera);
+      this.buildFirstPersonWeapon();
+    } else {
+      // Drop the view model, otherwise it keeps rendering attached to the camera.
+      this.disposeFirstPersonWeapon();
+      this.firstPersonAnchor.removeFromParent();
+    }
+    this.player.group.visible = !wantsFirst && this.player.alive;
+    return this.firstPerson;
+  }
+
+  get viewMode(): 'first' | 'third' { return this.firstPerson ? 'first' : 'third'; }
+
+  private buildFirstPersonWeapon() {
+    const spec = this.player.weapon;
+    this.disposeFirstPersonWeapon();
+    const team = this.player.team;
+    const accent = new THREE.MeshToonMaterial({ color: TEAM_COLORS[team].light });
+    const dark = new THREE.MeshToonMaterial({ color: 0x232f40 });
+    const weapon = makeWeapon(spec, accent, dark, TEAM_COLORS[team].main);
+    weapon.scale.setScalar(FP_WEAPON_SCALE);
+    weapon.rotation.set(0, -0.06, 0.03);
+    this.firstPersonAnchor.clear();
+    this.firstPersonAnchor.add(weapon);
+    this.firstPersonAnchor.position.copy(FP_WEAPON_OFFSET);
+    this.firstPersonAnchor.rotation.set(0, 0, 0);
+    this.firstPersonWeaponId = spec.id;
+    if (!this.firstPersonAnchor.parent) this.camera.add(this.firstPersonAnchor);
+  }
+
+  private disposeFirstPersonWeapon() {
+    this.firstPersonAnchor.traverse(object => {
+      const mesh = object as THREE.Mesh;
+      if (mesh.isMesh) {
+        mesh.geometry?.dispose();
+        const material = mesh.material as THREE.Material | THREE.Material[];
+        if (Array.isArray(material)) material.forEach(item => item.dispose());
+        else material?.dispose();
+      }
+    });
+    this.firstPersonAnchor.clear();
+    this.firstPersonWeaponId = null;
+  }
 
   getDebugState() {
     return {
@@ -545,7 +618,12 @@ export class NeonGame {
     if (!this.player.alive) return;
     const look = this.input.consumeLook();
     this.cameraYaw -= look.x * 0.0022 * this.save.sensitivity;
-    this.cameraPitch = THREE.MathUtils.clamp(this.cameraPitch - look.y * 0.0018 * this.save.sensitivity, 0.12, 0.78);
+    if (this.firstPerson) {
+      // In first person the same drag direction tilts the view up/down around eye level.
+      this.firstPersonPitch = THREE.MathUtils.clamp(this.firstPersonPitch - look.y * 0.0018 * this.save.sensitivity, -0.85, 0.85);
+    } else {
+      this.cameraPitch = THREE.MathUtils.clamp(this.cameraPitch - look.y * 0.0018 * this.save.sensitivity, 0.12, 0.78);
+    }
     const forward = new THREE.Vector3(-Math.sin(this.cameraYaw), 0, -Math.cos(this.cameraYaw));
     const right = new THREE.Vector3(Math.cos(this.cameraYaw), 0, -Math.sin(this.cameraYaw));
     const desired = forward.multiplyScalar(this.input.state.moveY).add(right.multiplyScalar(this.input.state.moveX));
@@ -1462,6 +1540,29 @@ export class NeonGame {
     this.spawnGroundRing(position.clone().setY(0.1), projectile.owner.team, 0.7, blastRadius * 1.5, 0.45);
   }
 
+  /** Snapshot of the battle camera so view-mode changes can be asserted. */
+  debugViewState() {
+    const playerPosition = this.player.group.position;
+    return {
+      mode: this.viewMode,
+      bodyVisible: this.player.group.visible,
+      cameraFov: this.camera.fov,
+      cameraPosition: {
+        x: Number(this.camera.position.x.toFixed(3)),
+        y: Number(this.camera.position.y.toFixed(3)),
+        z: Number(this.camera.position.z.toFixed(3))
+      },
+      playerPosition: {
+        x: Number(playerPosition.x.toFixed(3)),
+        y: Number(playerPosition.y.toFixed(3)),
+        z: Number(playerPosition.z.toFixed(3))
+      },
+      distanceToPlayer: Number(this.camera.position.distanceTo(playerPosition).toFixed(3)),
+      weaponModel: this.firstPersonWeaponId,
+      pitch: Number(this.firstPersonPitch.toFixed(3))
+    };
+  }
+
   /** Switch the player's weapon (stats only; visual model is unchanged). */
   debugSetPlayerWeapon(id: string) {
     if (location.hostname !== 'localhost') return false;
@@ -1560,6 +1661,48 @@ export class NeonGame {
     return best;
   }
 
+  /**
+   * First-person eyes: the camera rides the animated head so breathing, landing and
+   * ink-swim motion carry into the view, while the body itself stays hidden.
+   */
+  private updateFirstPersonCamera(dt: number) {
+    const player = this.player;
+    player.group.visible = false;
+    if (this.firstPersonWeaponId !== player.weapon.id) this.buildFirstPersonWeapon();
+
+    const rig = player.group.userData.rig as { head?: THREE.Object3D } | undefined;
+    const eye = new THREE.Vector3();
+    if (rig?.head) rig.head.getWorldPosition(eye);
+    else eye.copy(player.group.position).add(new THREE.Vector3(0, 1.9, 0));
+    eye.y += 0.08 - player.swimLevel * 0.5;
+
+    const cosPitch = Math.cos(this.firstPersonPitch);
+    const look = new THREE.Vector3(
+      -Math.sin(this.cameraYaw) * cosPitch,
+      -Math.sin(this.firstPersonPitch),
+      -Math.cos(this.cameraYaw) * cosPitch
+    );
+
+    this.camera.position.copy(eye);
+    if (this.cameraShake > 0.001) {
+      const shake = this.cameraShake * 0.12;
+      this.camera.position.x += (Math.random() - 0.5) * shake;
+      this.camera.position.y += (Math.random() - 0.5) * shake * 0.7;
+    }
+    this.camera.lookAt(eye.x + look.x, eye.y + look.y, eye.z + look.z);
+
+    // Weapon sway follows the walk cycle and the recoil kick settles back down.
+    const moveAmount = THREE.MathUtils.smoothstep(player.velocity.length(), 0.2, 7.5);
+    const bob = Math.sin(this.elapsed * 10.5) * moveAmount;
+    const kick = player.recoil;
+    this.firstPersonAnchor.position.set(
+      FP_WEAPON_OFFSET.x + bob * 0.014,
+      FP_WEAPON_OFFSET.y + Math.abs(bob) * 0.012 - kick * 0.022,
+      FP_WEAPON_OFFSET.z + kick * 0.07
+    );
+    this.firstPersonAnchor.rotation.set(-kick * 0.24, bob * 0.02, 0);
+  }
+
   private updateCamera(dt: number) {
     if (this.spectatorMode) {
       this.spectatorBoundsTimer -= dt;
@@ -1609,6 +1752,7 @@ export class NeonGame {
       return;
     }
     this.cameraShake = Math.max(0, this.cameraShake - dt * 2.4);
+    if (this.firstPerson) { this.updateFirstPersonCamera(dt); return; }
     const target = this.player.group.position.clone().add(new THREE.Vector3(0, 1.3, 0));
     const distance = 6.5;
     const offset = new THREE.Vector3(Math.sin(this.cameraYaw) * Math.cos(this.cameraPitch), Math.sin(this.cameraPitch), Math.cos(this.cameraYaw) * Math.cos(this.cameraPitch)).multiplyScalar(distance);

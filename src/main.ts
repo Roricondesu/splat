@@ -18,6 +18,7 @@ const ui = new GameUI(app, {
   },
   pauseGame: paused => game?.setPaused(paused),
   liveStart: (profiles, room, live) => beginGame(true, profiles, { ...room, started: true }, live),
+  setViewMode: mode => { game?.setViewMode(mode); },
   saveChanged: save => { latestSave = save; }
 });
 latestSave = ui.save;
@@ -50,6 +51,8 @@ function beginGame(spectating = false, liveProfiles: LiveProfile[] = [], liveRoo
         setPlayerWeapon: (id: string) => game?.debugSetPlayerWeapon(id),
         setupPiercingProbe: () => game?.debugSetupPiercingProbe(),
         shieldProbe: (baseDamage?: number) => game?.debugShieldProbe(baseDamage),
+        viewState: () => game?.debugViewState(),
+        setViewMode: (mode: 'first' | 'third') => game?.setViewMode(mode),
         weaponSpecs: () => WEAPONS.map(weapon => ({ ...weapon }))
       }
     });
@@ -61,6 +64,15 @@ window.addEventListener('keydown', e => {
   if (e.code === 'Escape' && game?.isRunning && !game.isPaused) {
     game.setPaused(true);
     ui.toast('游戏已暂停，点击右上角继续或退出');
+    return;
+  }
+  // V toggles the battle camera; spectators always stay in third person.
+  if (e.code === 'KeyV' && game?.isRunning && !game.isPaused && !game.isSpectating) {
+    const next = game.viewMode === 'first' ? 'third' : 'first';
+    game.setViewMode(next);
+    ui.save.viewMode = next;
+    ui.persist();
+    ui.toast(next === 'first' ? '已切换：第一人称' : '已切换：第三人称');
   }
 });
 

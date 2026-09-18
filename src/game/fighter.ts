@@ -157,7 +157,8 @@ function makeLimb(length: number, radius: number, material: THREE.Material) {
   return pivot;
 }
 
-function makeWeapon(spec: WeaponSpec, accent: THREE.Material, dark: THREE.Material, teamColor: number) {
+/** Builds the weapon model; reused by the first-person view model. */
+export function makeWeapon(spec: WeaponSpec, accent: THREE.Material, dark: THREE.Material, teamColor: number) {
   const root = new THREE.Group();
   const paintMat = glossMaterial(teamColor);
 

@@ -144,6 +144,8 @@ export interface SaveData {
   quality: 'low' | 'medium' | 'high';
   arena: ArenaId;
   joystickMode: 'fixed' | 'floating';
+  /** Battle camera: third-person follow or first-person eyes. */
+  viewMode: 'third' | 'first';
   infiniteInk: boolean;
   infiniteHealth: boolean;
   customMode: CustomModeConfig;
@@ -180,6 +182,7 @@ export const DEFAULT_SAVE: SaveData = {
   quality: 'high',
   arena: 'skyline-market',
   joystickMode: 'fixed',
+  viewMode: 'third',
   infiniteInk: false,
   infiniteHealth: false,
   customMode: DEFAULT_CUSTOM_MODE,
