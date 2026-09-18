@@ -22,8 +22,12 @@ try {
   await page.waitForTimeout(250);
 
   const before = await page.evaluate(() => window.__neonDebug?.state());
-  for (let i = 0; i < 4; i++) await page.evaluate(() => window.__neonDebug?.firePlayer());
-  await page.evaluate(() => window.__neonDebug?.throwWaterBomb());
+  // Read the count in the same tick as the throw: the bomb explodes mid-flight, so
+  // sampling later is racy.
+  const bombsLaunched = await page.evaluate(() => {
+    window.__neonDebug?.throwWaterBomb();
+    return window.__neonDebug?.state()?.waterBombs ?? 0;
+  });
   await page.evaluate(() => {
     window.__neonDebug?.setPlayerHealth(15);
     window.__neonDebug?.paintUnderPlayer('orange');
@@ -34,7 +38,7 @@ try {
   if (saved.infiniteInk !== true || saved.infiniteHealth !== true) failures.push(`settings not persisted: ${JSON.stringify(saved)}`);
   if ((after?.playerAmmo || 0) !== 100) failures.push(`infinite ink failed: ${before?.playerAmmo} -> ${after?.playerAmmo}`);
   if ((after?.playerHealth || 0) !== 100) failures.push(`infinite health failed: ${after?.playerHealth}`);
-  if ((after?.waterBombs || 0) < 1) failures.push('infinite ink water bomb did not launch');
+  if (bombsLaunched < 1) failures.push('infinite ink water bomb did not launch');
   if (errors.length) failures.push(...errors);
   console.log(JSON.stringify({ saved: { infiniteInk: saved.infiniteInk, infiniteHealth: saved.infiniteHealth }, beforeAmmo: before?.playerAmmo, afterAmmo: after?.playerAmmo, afterHealth: after?.playerHealth, waterBombs: after?.waterBombs, errors, failures }, null, 2));
   if (failures.length) process.exitCode = 1;

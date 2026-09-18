@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
 import { ArenaBuild, createArena } from './arena';
-import { Difficulty, HAIRSTYLES, HairstyleId, ArenaId, OUTFITS, SaveData, TEAM_COLORS, TEAM_ORDER, Team, WEAPONS, WeaponId, WeaponSpec } from './config';
-import { animateElimination, animateFighter, createFighter, Fighter, makeWeapon, resetFighterPose } from './fighter';
+import { Difficulty, HAIRSTYLES, HairstyleId, ArenaId, BR_WORLD_SIZE, OUTFITS, SaveData, TEAM_COLORS, TEAM_ORDER, Team, WEAPONS, WeaponId, WeaponSpec } from './config';
+import { animateElimination, animateFighter, createFighter, Fighter, makeWeapon, resetFighterPose, setFighterFarDetail } from './fighter';
 import { InputController } from './input';
 import { PaintField } from './paintField';
 import type { LiveEvent, LiveProfile } from '../live/live';
@@ -65,6 +65,12 @@ export interface GameStats {
   weapon: WeaponSpec;
   alive: boolean;
   respawn: number;
+  /** Battle royale readouts. */
+  brMode?: boolean;
+  aliveCount?: number;
+  totalCount?: number;
+  outsideZone?: boolean;
+  zoneShrinking?: boolean;
 }
 
 export interface GameCallbacks {
@@ -112,6 +118,17 @@ export class NeonGame {
   private liveFeed: Array<{ userName: string; content: string; result: string; tone: 'ok' | 'warn' | 'info' }> = [];
   private liveGiftPower = 0;
   private liveUnlimited = false;
+  private readonly brMode: boolean;
+  private readonly brOptions?: { players: number; teams: number };
+  private readonly brCenter = new THREE.Vector3();
+  private brRadius = 0;
+  private brPhaseStartRadius = 0;
+  private brTargetRadius = 0;
+  private brPhaseTimer = 0;
+  private brPhaseIndex = 0;
+  private brShrinking = false;
+  private brRing?: THREE.Mesh;
+  private brWall?: THREE.Mesh;
   private elapsed = 0;
   private matchTime = this.getMatchDuration();
   private cameraYaw = Math.PI;
@@ -135,6 +152,7 @@ export class NeonGame {
   private spectatorBoundsTimer = 0;
   private spectatorAliveCount = 0;
   private spectatorInitialized = false;
+  private detailLodTimer = 0;
   private firstPerson = false;
   private firstPersonPitch = 0;
   private firstPersonWeaponId: WeaponId | null = null;
@@ -146,8 +164,10 @@ export class NeonGame {
   private playerShotCount = 0;
   private playerLastShotPellets = 0;
 
-  constructor(private canvas: HTMLCanvasElement, private save: SaveData, private callbacks: GameCallbacks, liveProfiles: LiveProfile[] = [], private liveRoom?: { roomCode: string; connected: boolean; viewers: number; liveMatchSeconds?: number | null; liveTeams?: number; liveAiPerTeam?: number; liveTeamSize?: number; profiles: LiveProfile[] }, private liveEvents?: LiveEventSource) {
+  constructor(private canvas: HTMLCanvasElement, private save: SaveData, private callbacks: GameCallbacks, liveProfiles: LiveProfile[] = [], private liveRoom?: { roomCode: string; connected: boolean; viewers: number; liveMatchSeconds?: number | null; liveTeams?: number; liveAiPerTeam?: number; liveTeamSize?: number; profiles: LiveProfile[] }, private liveEvents?: LiveEventSource, brOptions?: { players: number; teams: number }) {
     this.liveMode = Boolean(liveRoom);
+    this.brMode = Boolean(brOptions) && !this.liveMode;
+    this.brOptions = this.brMode ? brOptions : undefined;
     this.liveUnlimited = this.liveMode && liveRoom?.liveMatchSeconds === null;
     this.liveTeamCount = this.liveMode ? liveRoom?.liveTeams ?? 4 : 2;
     this.liveAiPerTeam = this.liveMode ? liveRoom?.liveAiPerTeam ?? 1 : 1;
@@ -156,14 +176,24 @@ export class NeonGame {
     this.liveProfiles = liveProfiles.map(profile => ({ ...profile }));
     this.liveTeamSize = this.liveMode ? this.liveAiPerTeam : 1;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: save.quality !== 'low', powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.liveMode ? 1.25 : save.quality === 'high' ? 1.6 : save.quality === 'medium' ? 1.25 : 1));
-    this.renderer.shadowMap.enabled = save.quality !== 'low' && !this.liveMode;
+    // 20-50 fighters is a lot of draw calls: battle royale keeps the cheaper budget.
+    this.renderer.setPixelRatio(Math.min(devicePixelRatio, this.liveMode || this.brMode ? 1.25 : save.quality === 'high' ? 1.6 : save.quality === 'medium' ? 1.25 : 1));
+    this.renderer.shadowMap.enabled = save.quality !== 'low' && !this.liveMode && !this.brMode;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.05;
     this.input = new InputController(canvas, save.joystickMode);
-    this.arena = createArena(this.scene, this.liveMode ? 'custom' : save.arena, this.liveMode ? { ...save.customMode, worldSize: 72, teamSize: this.liveTeamSize, teamCount: this.liveTeamCount as 2 | 3 | 4 | 5 | 6, blocks: [] } : save.customMode);
+    const brTeamSize = this.brOptions ? Math.max(2, Math.ceil(this.brOptions.players / this.brOptions.teams)) : 0;
+    this.arena = createArena(
+      this.scene,
+      this.liveMode ? 'custom' : this.brMode ? 'battle-royale' : save.arena,
+      this.liveMode
+        ? { ...save.customMode, worldSize: 72, teamSize: this.liveTeamSize, teamCount: this.liveTeamCount as 2 | 3 | 4 | 5 | 6, blocks: [] }
+        : this.brMode
+          ? { ...save.customMode, worldSize: BR_WORLD_SIZE, teamSize: brTeamSize, teamCount: this.brOptions!.teams as 2 | 3 | 4 | 5 | 6, blocks: [] }
+          : save.customMode
+    );
     this.obstacles = this.arena.obstacles;
     this.paintables = this.arena.paintables;
     this.walkables = this.arena.walkables;
@@ -182,6 +212,7 @@ export class NeonGame {
     this.tailMaterials = Object.fromEntries(TEAM_ORDER.map(team => [team, new THREE.MeshBasicMaterial({ color: TEAM_COLORS[team].main, transparent: true, opacity: 0.34, depthWrite: false })])) as Record<Team, THREE.MeshBasicMaterial>;
     this.difficulty = save.difficulty;
     this.createTeams();
+    if (this.brMode) this.setupBattleRoyaleZone();
     this.unsubscribeLiveEvents = this.liveEvents?.subscribeEvents(event => this.handleLiveEvent(event));
     // The camera joins the scene graph so first-person view-model children render.
     this.scene.add(this.camera);
@@ -546,6 +577,12 @@ export class NeonGame {
     Object.values(this.projectileGeometries).forEach(geometry => geometry.dispose());
     Object.values(this.projectileMaterials).forEach(material => material.dispose());
     Object.values(this.tailMaterials).forEach(material => material.dispose());
+    for (const zoneMesh of [this.brRing, this.brWall]) {
+      if (!zoneMesh) continue;
+      this.scene.remove(zoneMesh);
+      zoneMesh.geometry.dispose();
+      (zoneMesh.material as THREE.Material).dispose();
+    }
     this.renderer.dispose();
   }
 
@@ -559,7 +596,11 @@ export class NeonGame {
       const team = teams[teamIndex];
       const spawns = this.arena.spawns[team] ?? [];
       const teamProfiles = this.liveMode ? this.liveInitialProfiles.filter(profile => profile.team === team).slice(0, teamSize) : [];
-      for (let member = 0; member < teamSize; member++) {
+      // Battle royale spreads an exact headcount (20-50) as evenly as possible.
+      const memberCount = this.brOptions
+        ? Math.floor(this.brOptions.players / teams.length) + (teamIndex < this.brOptions.players % teams.length ? 1 : 0)
+        : teamSize;
+      for (let member = 0; member < memberCount; member++) {
         const spawn = spawns[member] ?? new THREE.Vector3(Math.cos(teamIndex / teams.length * Math.PI * 2) * 24, 0, Math.sin(teamIndex / teams.length * Math.PI * 2) * 24);
         const liveProfile = teamProfiles[member];
         const isPlayer = teamIndex === 0 && member === 0;
@@ -575,6 +616,105 @@ export class NeonGame {
         if (isPlayer) this.player = fighter;
       }
     }
+  }
+
+  /** Zone phases: hold at the current radius, then shrink by `scale`. */
+  private static readonly BR_PHASES = [
+    { hold: 30, shrink: 24, scale: 0.66 },
+    { hold: 22, shrink: 20, scale: 0.62 },
+    { hold: 18, shrink: 17, scale: 0.58 },
+    { hold: 15, shrink: 15, scale: 0.55 },
+    { hold: 12, shrink: 14, scale: 0.5 }
+  ];
+  private static readonly BR_MIN_RADIUS = 14;
+  private static readonly BR_ZONE_DPS = 14;
+
+  private setupBattleRoyaleZone() {
+    this.brCenter.set(0, 0, 0);
+    this.brRadius = this.arena.worldSize * 0.5 - 4;
+    this.brPhaseStartRadius = this.brRadius;
+    this.brTargetRadius = this.brRadius;
+    this.brPhaseTimer = 0;
+    this.brPhaseIndex = 0;
+    this.brShrinking = false;
+
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.965, 1, 96),
+      new THREE.MeshBasicMaterial({ color: 0x7ce7ff, transparent: true, opacity: 0.9, side: THREE.DoubleSide, depthWrite: false })
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.06;
+    ring.renderOrder = 8;
+    this.scene.add(ring);
+    this.brRing = ring;
+
+    const wall = new THREE.Mesh(
+      new THREE.CylinderGeometry(1, 1, 30, 72, 1, true),
+      new THREE.MeshBasicMaterial({ color: 0x7ce7ff, transparent: true, opacity: 0.13, side: THREE.DoubleSide, depthWrite: false })
+    );
+    wall.position.y = 15;
+    this.scene.add(wall);
+    this.brWall = wall;
+    this.syncBattleRoyaleZoneVisuals();
+  }
+
+  private syncBattleRoyaleZoneVisuals() {
+    if (this.brRing) {
+      this.brRing.position.set(this.brCenter.x, 0.06, this.brCenter.z);
+      this.brRing.scale.set(this.brRadius, this.brRadius, 1);
+    }
+    if (this.brWall) {
+      this.brWall.position.set(this.brCenter.x, 15, this.brCenter.z);
+      this.brWall.scale.set(this.brRadius, 1, this.brRadius);
+    }
+  }
+
+  /** Advance the shrinking safe zone and burn anyone caught outside it. */
+  private updateBattleRoyale(dt: number) {
+    const phases = NeonGame.BR_PHASES;
+    if (this.brPhaseIndex < phases.length) {
+      const phase = phases[this.brPhaseIndex];
+      this.brPhaseTimer += dt;
+      if (!this.brShrinking) {
+        if (this.brPhaseTimer >= phase.hold) {
+          this.brShrinking = true;
+          this.brPhaseTimer = 0;
+          this.brPhaseStartRadius = this.brRadius;
+          this.brTargetRadius = Math.max(NeonGame.BR_MIN_RADIUS, this.brRadius * phase.scale);
+        }
+      } else {
+        const progress = Math.min(1, this.brPhaseTimer / phase.shrink);
+        this.brRadius = THREE.MathUtils.lerp(this.brPhaseStartRadius, this.brTargetRadius, progress);
+        if (progress >= 1) {
+          this.brShrinking = false;
+          this.brPhaseTimer = 0;
+          this.brPhaseIndex++;
+        }
+      }
+    }
+    this.syncBattleRoyaleZoneVisuals();
+
+    for (const fighter of this.fighters) {
+      if (!fighter.alive || fighter.swim) continue;
+      const distance = Math.hypot(fighter.group.position.x - this.brCenter.x, fighter.group.position.z - this.brCenter.z);
+      if (distance <= this.brRadius) continue;
+      if (fighter.isPlayer && this.save.infiniteHealth) continue;
+      fighter.lastDamagedAt = this.elapsed;
+      fighter.inkStain = Math.max(fighter.inkStain, 0.5);
+      if (this.customRule('allowDamage')) fighter.health -= NeonGame.BR_ZONE_DPS * dt;
+      if (fighter.health <= 0) this.eliminate(fighter, null);
+    }
+  }
+
+  private aliveFighters() { return this.fighters.filter(fighter => fighter.alive); }
+
+  private aliveTeamCount() {
+    return new Set(this.aliveFighters().map(fighter => fighter.team)).size;
+  }
+
+  private isOutsideZone(fighter: Fighter) {
+    if (!this.brMode) return false;
+    return Math.hypot(fighter.group.position.x - this.brCenter.x, fighter.group.position.z - this.brCenter.z) > this.brRadius;
   }
 
   private loop = (now: number) => {
@@ -598,10 +738,16 @@ export class NeonGame {
       if (!fighter.isPlayer) this.updateAI(fighter, dt);
       this.updateFighterCommon(fighter, dt, time);
     }
+    if (this.brMode) {
+      this.updateBattleRoyale(dt);
+      // Battle royale ends the moment only one squad is still standing.
+      if (this.aliveTeamCount() <= 1) { this.finish(); return; }
+    }
     this.updateProjectiles(dt);
     this.updateWaterBombs(dt);
     this.updateEffects(dt);
     this.paint.flushTexture(time);
+    this.updateDetailLod(dt);
     this.updateCamera(dt);
     if (this.elapsed - this.lastStatsAt > 0.12) { this.lastStatsAt = this.elapsed; this.emitStats(); }
   }
@@ -1456,7 +1602,8 @@ export class NeonGame {
     });
   }
 
-  private eliminate(victim: Fighter, attacker: Fighter) {
+  /** `attacker` is null when the safe zone finishes someone off. */
+  private eliminate(victim: Fighter, attacker: Fighter | null) {
     if (!this.customRule('allowDamage')) return;
     // The body stays on the field for a short splat collapse so the splat reads clearly.
     victim.alive = false; victim.health = 0; victim.respawnAt = performance.now() / 1000 + 3;
@@ -1467,8 +1614,15 @@ export class NeonGame {
     victim.surfaceClimbing = false;
     victim.rollerHitCooldown = 0;
     victim.aimPitch = 0;
-    attacker.score += 100;
-    if (attacker.isPlayer) this.kills++;
+    const splatTeam = attacker?.team ?? victim.team;
+    if (attacker) {
+      attacker.score += 100;
+      if (attacker.isPlayer) this.kills++;
+      // A squad wipe is worth more than a single splat.
+      if (this.brMode && !this.fighters.some(item => item.alive && item.team === victim.team)) attacker.score += 150;
+    }
+    // In battle royale a fallen player keeps watching as a spectator.
+    if (this.brMode && victim.isPlayer && !this.spectatorMode) this.enterBattleRoyaleSpectating();
     // Splatted fighters burst into one big radial paint explosion on the ground.
     const pos = victim.group.position;
     for (let i = 0; i < 4; i++) {
@@ -1478,16 +1632,25 @@ export class NeonGame {
         pos.x + Math.cos(a) * dist,
         pos.z + Math.sin(a) * dist,
         1.5 + Math.random() * 1.1,
-        attacker.team,
+        splatTeam,
         Math.cos(a),
         Math.sin(a),
         0.35,
         'elimination'
       );
     }
-    this.spawnPaintSplash(pos.clone().setY(0.8), attacker.team, 1.25);
-    this.spawnGroundRing(pos, attacker.team, 0.55, 4.2, 0.5);
-    this.playTone(attacker.isPlayer ? 540 : 400, 0.16, 0.07);
+    this.spawnPaintSplash(pos.clone().setY(0.8), splatTeam, 1.25);
+    this.spawnGroundRing(pos, splatTeam, 0.55, 4.2, 0.5);
+    this.playTone(attacker?.isPlayer ? 540 : 400, 0.16, 0.07);
+  }
+
+  /** Hand control to the free camera once the player is out of a battle royale. */
+  private enterBattleRoyaleSpectating() {
+    this.player.isPlayer = false;
+    this.player.aiMode = 'paint';
+    this.spectatorMode = true;
+    this.spectatorInitialized = false;
+    if (this.firstPerson) this.setViewMode('third');
   }
 
   /** Shove the fighter away from the hit source so impacts read directionally. */
@@ -1538,6 +1701,62 @@ export class NeonGame {
       if (eliminated) this.eliminate(fighter, projectile.owner);
     }
     this.spawnGroundRing(position.clone().setY(0.1), projectile.owner.team, 0.7, blastRadius * 1.5, 0.45);
+  }
+
+  /** Battle royale readout for regression checks. */
+  debugBattleRoyale() {
+    return {
+      mode: this.brMode,
+      players: this.brOptions?.players ?? 0,
+      teams: this.brOptions?.teams ?? 0,
+      fighterCount: this.fighters.length,
+      aliveCount: this.aliveFighters().length,
+      aliveTeams: this.aliveTeamCount(),
+      radius: Number(this.brRadius.toFixed(2)),
+      shrinking: this.brShrinking,
+      phase: this.brPhaseIndex,
+      worldSize: this.arena.worldSize,
+      sandbox: this.aliveTeams(),
+      outsideZone: this.isOutsideZone(this.player),
+      spectator: this.spectatorMode
+    };
+  }
+
+  private aliveTeams() {
+    return [...new Set(this.fighters.map(fighter => fighter.team))];
+  }
+
+  /** Jump straight to the final, tiny zone so the endgame can be exercised quickly. */
+  debugCollapseZone() {
+    if (!this.brMode) return false;
+    this.brPhaseIndex = NeonGame.BR_PHASES.length;
+    this.brShrinking = false;
+    this.brPhaseTimer = 0;
+    this.brRadius = NeonGame.BR_MIN_RADIUS;
+    this.brTargetRadius = NeonGame.BR_MIN_RADIUS;
+    this.syncBattleRoyaleZoneVisuals();
+    return true;
+  }
+
+  /** Wipe every squad except one so the battle royale win condition can be checked. */
+  debugEliminateAllButOneTeam() {
+    if (!this.brMode) return null;
+    const survivors = new Set<Team>();
+    for (const fighter of this.fighters) {
+      if (!fighter.alive) continue;
+      if (survivors.size === 0) survivors.add(fighter.team);
+      if (survivors.has(fighter.team)) continue;
+      this.eliminate(fighter, null);
+    }
+    return { aliveTeams: this.aliveTeamCount(), aliveCount: this.aliveFighters().length };
+  }
+
+  /** Teleport the player just outside the safe zone to verify the burn. */
+  debugPlacePlayerOutsideZone() {
+    if (!this.brMode) return null;
+    const distance = this.brRadius + 6;
+    this.player.group.position.set(this.brCenter.x + distance, this.player.group.position.y, this.brCenter.z);
+    return { distance, radius: this.brRadius };
   }
 
   /** Snapshot of the battle camera so view-mode changes can be asserted. */
@@ -1703,6 +1922,21 @@ export class NeonGame {
     this.firstPersonAnchor.rotation.set(-kick * 0.24, bob * 0.02, 0);
   }
 
+  /**
+   * Crowd LOD: 20-50 fighters on one field is draw-call bound, so faces lose their
+   * small cosmetic parts once they are far from the camera.
+   */
+  private updateDetailLod(dt: number) {
+    this.detailLodTimer -= dt;
+    if (this.detailLodTimer > 0) return;
+    this.detailLodTimer = 0.15;
+    for (const fighter of this.fighters) {
+      if (!fighter.alive) continue;
+      if (fighter.isPlayer) { setFighterFarDetail(fighter, true); continue; }
+      setFighterFarDetail(fighter, this.camera.position.distanceTo(fighter.group.position) < 34);
+    }
+  }
+
   private updateCamera(dt: number) {
     if (this.spectatorMode) {
       this.spectatorBoundsTimer -= dt;
@@ -1776,7 +2010,12 @@ export class NeonGame {
       time: Math.max(0, this.matchTime), cyan: cyanPercent, orange: orangePercent,
       teams: endingTeams,
       health: this.player.health, ammo: this.player.ammo, score: this.spectatorMode ? 0 : this.player.score, weapon: this.player.weapon,
-      alive: this.spectatorMode ? true : this.player.alive, respawn: this.spectatorMode || this.player.alive ? 0 : Math.max(0, this.player.respawnAt - performance.now() / 1000)
+      alive: this.spectatorMode ? true : this.player.alive, respawn: this.spectatorMode || this.player.alive ? 0 : Math.max(0, this.player.respawnAt - performance.now() / 1000),
+      brMode: this.brMode,
+      aliveCount: this.brMode ? this.aliveFighters().length : undefined,
+      totalCount: this.brMode ? this.fighters.length : undefined,
+      outsideZone: this.brMode ? this.isOutsideZone(this.player) : undefined,
+      zoneShrinking: this.brMode ? this.brShrinking : undefined
     });
   }
 
@@ -1864,12 +2103,14 @@ export class NeonGame {
   }
 
   private customRule(key: 'allowJump' | 'allowSubmerge' | 'allowSpecialWeapons' | 'allowRespawn' | 'allowDamage' | 'turfWin') {
+    // Battle royale is one life per fighter.
+    if (this.brMode && key === 'allowRespawn') return false;
     return this.arena.id !== 'custom' || this.save.customMode.rules[key];
   }
 
   private getMatchDuration() {
     const requested = Number(new URLSearchParams(location.search).get('testMatchSeconds'));
-    const base = this.liveMode ? (this.liveUnlimited ? Number.POSITIVE_INFINITY : 120) : this.arena?.id === 'custom' ? this.save.customMode.rules.matchSeconds : 150;
+    const base = this.liveMode ? (this.liveUnlimited ? Number.POSITIVE_INFINITY : 120) : this.brMode ? 300 : this.arena?.id === 'custom' ? this.save.customMode.rules.matchSeconds : 150;
     if (this.liveMode && this.liveUnlimited) return Number.POSITIVE_INFINITY;
     return location.hostname === 'localhost' && Number.isFinite(requested) && requested > 0
       ? THREE.MathUtils.clamp(requested, 2, 300)

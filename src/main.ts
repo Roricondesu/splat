@@ -19,18 +19,19 @@ const ui = new GameUI(app, {
   pauseGame: paused => game?.setPaused(paused),
   liveStart: (profiles, room, live) => beginGame(true, profiles, { ...room, started: true }, live),
   setViewMode: mode => { game?.setViewMode(mode); },
+  startBattleRoyale: options => beginGame(false, [], undefined, undefined, options),
   saveChanged: save => { latestSave = save; }
 });
 latestSave = ui.save;
 
-function beginGame(spectating = false, liveProfiles: LiveProfile[] = [], liveRoom?: LiveRoomState, live?: LiveCommandProcessor) {
+function beginGame(spectating = false, liveProfiles: LiveProfile[] = [], liveRoom?: LiveRoomState, live?: LiveCommandProcessor, brOptions?: { players: number; teams: number }) {
   game?.dispose();
-  const canvas = ui.showGameShell(spectating, Boolean(live), live);
+  const canvas = ui.showGameShell(spectating, Boolean(live), live, Boolean(brOptions));
   game = new NeonGame(canvas, { ...latestSave }, {
     onStats: stats => ui.updateStats(stats),
     onHit: (damage, eliminated) => ui.showHitmarker(damage, eliminated),
     onEnd: stats => { game?.dispose(); game = null; ui.showResult(stats); }
-  }, liveProfiles, liveRoom, live);
+  }, liveProfiles, liveRoom, live, brOptions);
   game.bindMobileControls(app);
   game.setSpectatorMode(spectating);
   if (location.hostname === 'localhost') {
@@ -53,6 +54,10 @@ function beginGame(spectating = false, liveProfiles: LiveProfile[] = [], liveRoo
         shieldProbe: (baseDamage?: number) => game?.debugShieldProbe(baseDamage),
         viewState: () => game?.debugViewState(),
         setViewMode: (mode: 'first' | 'third') => game?.setViewMode(mode),
+        battleRoyale: () => game?.debugBattleRoyale(),
+        collapseZone: () => game?.debugCollapseZone(),
+        placePlayerOutsideZone: () => game?.debugPlacePlayerOutsideZone(),
+        eliminateAllButOneTeam: () => game?.debugEliminateAllButOneTeam(),
         weaponSpecs: () => WEAPONS.map(weapon => ({ ...weapon }))
       }
     });

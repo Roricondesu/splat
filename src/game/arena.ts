@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ArenaId, CustomModeConfig, Team, TEAM_ORDER } from './config';
+import { ArenaId, BR_WORLD_SIZE, CustomModeConfig, Team, TEAM_ORDER } from './config';
 
 const INK = 0x17303e;
 const WHITE = 0xf4f8fa;
@@ -266,6 +266,69 @@ function buildCanalFoundry(ctx: BuildContext) {
   };
 }
 
+/**
+ * Battle royale arena: one very large field with four cover districts around a
+ * raised centre landmark, so 20-50 fighters always have something to fight around.
+ */
+function buildBattleRoyale(ctx: BuildContext, config: CustomModeConfig) {
+  const size = config.worldSize;
+  const half = size * 0.5;
+  addPerimeter(ctx, size + 2);
+
+  // Centre landmark: a raised platform ringed by four broad ramps.
+  placeBox(ctx, [30, 1.5, 30], [0, 0.75, 0], WHITE, { solid: true, walkable: true, gloss: true });
+  placeBox(ctx, [13, 3.4, 13], [0, 2.45, 0], WHITE, { solid: true, walkable: true, gloss: true });
+  for (const angle of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+    placeRamp(
+      ctx,
+      new THREE.Vector3(Math.cos(angle) * 22, 0, Math.sin(angle) * 22),
+      7, 11, 1.5, angle + Math.PI / 2, WHITE
+    );
+  }
+
+  // Four cover districts give every squad a defensible drop area.
+  const districts: Array<[number, number]> = [[-58, -58], [58, -58], [-58, 58], [58, 58]];
+  districts.forEach(([x, z], index) => {
+    building(ctx, x, z, 18, 14, 5.6, WHITE, INK);
+    building(ctx, x + Math.sign(x) * 22, z - Math.sign(z) * 16, 12, 12, 4.2, WHITE, INK);
+    building(ctx, x - Math.sign(x) * 18, z + Math.sign(z) * 18, 14, 10, 6.8, WHITE, INK);
+    placeRamp(ctx, new THREE.Vector3(x, 0, z + Math.sign(z) * 12), 6, 11, 5.6, z > 0 ? Math.PI : 0, WHITE);
+    crateStack(ctx, x + Math.sign(x) * 30, z + Math.sign(z) * 26, WHITE, 2);
+    arch(ctx, x - Math.sign(x) * 30, z - Math.sign(z) * 26, index * 0.6, WHITE);
+    pipe(ctx, new THREE.Vector3(x - 14, 8.4, z), new THREE.Vector3(x + 14, 8.4, z), 0.26, INK);
+  });
+
+  // Mid-field clusters break up the open ground between the centre and the corners.
+  for (const x of [-32, 32]) {
+    for (const z of [-32, 32]) {
+      crateStack(ctx, x, z, WHITE, 2);
+      placeBox(ctx, [12, 2.4, 4.5], [x * 1.7, 1.2, z * 1.7], WHITE, {
+        solid: true, walkable: true, gloss: true, rotationY: Math.atan2(x, z)
+      });
+    }
+  }
+
+  // Squads start spread around the rim, facing the centre.
+  const spawns: Partial<Record<Team, THREE.Vector3[]>> = {};
+  const ringRadius = half - 14;
+  for (let i = 0; i < config.teamCount; i++) {
+    const team = TEAM_ORDER[i];
+    const baseAngle = (i / config.teamCount) * Math.PI * 2;
+    const points: THREE.Vector3[] = [];
+    for (let j = 0; j < config.teamSize; j++) {
+      const arc = (j - (config.teamSize - 1) * 0.5) * (2.6 / ringRadius);
+      const angle = baseAngle + arc;
+      points.push(new THREE.Vector3(
+        THREE.MathUtils.clamp(Math.cos(angle) * ringRadius, -half + 4, half - 4),
+        0,
+        THREE.MathUtils.clamp(Math.sin(angle) * ringRadius, -half + 4, half - 4)
+      ));
+    }
+    spawns[team] = points;
+  }
+  return spawns;
+}
+
 function buildBlankExpanse(ctx: BuildContext) {
   const worldSize = 72;
   addPerimeter(ctx, worldSize + 2);
@@ -306,9 +369,11 @@ function buildBlankExpanse(ctx: BuildContext) {
 
 function addWorldLighting(scene: THREE.Scene, root: THREE.Group, id: ArenaId, customMode?: CustomModeConfig) {
   const isBlank = id === 'blank-expanse';
-  const customSize = id === 'custom' ? (customMode?.worldSize ?? 72) : 72;
-  scene.background = new THREE.Color(isBlank ? 0xb9e4ef : 0xd4edf2);
-  scene.fog = new THREE.FogExp2(isBlank ? 0xc5e9f0 : 0xdff3f4, isBlank ? 0.006 : 0.007);
+  const isBr = id === 'battle-royale';
+  const customSize = id === 'custom' ? (customMode?.worldSize ?? 72) : isBr ? BR_WORLD_SIZE : 72;
+  scene.background = new THREE.Color(isBr ? 0xbfe6f2 : isBlank ? 0xb9e4ef : 0xd4edf2);
+  // A huge arena needs thinner fog so distant cover stays readable.
+  scene.fog = new THREE.FogExp2(isBr ? 0xcfeaf3 : isBlank ? 0xc5e9f0 : 0xdff3f4, isBr ? 0.0026 : isBlank ? 0.006 : 0.007);
   const hemi = new THREE.HemisphereLight(0xe2f5ff, 0xe6d7bd, 2.1);
   root.add(hemi);
   const sun = new THREE.DirectionalLight(0xffe8bd, 3.15);
@@ -326,8 +391,8 @@ function addWorldLighting(scene: THREE.Scene, root: THREE.Group, id: ArenaId, cu
   fill.position.set(18, 20, -20);
   root.add(fill);
 
-  const underlaySize = id === 'custom' ? customSize + 20 : isBlank ? 92 : 72;
-  const underlay = meshBox(underlaySize, 0.18, underlaySize, id === 'skyline-market' ? CONCRETE : isBlank ? 0xd7dfe3 : 0x899ba4);
+  const underlaySize = id === 'custom' ? customSize + 20 : isBr ? BR_WORLD_SIZE + 40 : isBlank ? 92 : 72;
+  const underlay = meshBox(underlaySize, 0.18, underlaySize, id === 'skyline-market' ? CONCRETE : isBlank || isBr ? 0xd7dfe3 : 0x899ba4);
   underlay.position.y = -0.14;
   underlay.receiveShadow = true;
   scene.add(underlay);
@@ -366,14 +431,17 @@ export function createArena(scene: THREE.Scene, id: ArenaId, customMode?: Custom
   const ctx: BuildContext = { root, obstacles: [], walkables: [] };
   const isBlank = id === 'blank-expanse';
   const isCustom = id === 'custom' && Boolean(customMode);
+  const isBr = id === 'battle-royale' && Boolean(customMode);
   if (isCustom) scene.fog = new THREE.FogExp2(0xdff3f4, Math.max(0.003, 0.5 / customMode!.worldSize));
-  const spawns = isCustom
-    ? buildCustomArena(ctx, customMode!)
-    : isBlank
-      ? buildBlankExpanse(ctx)
-      : id === 'canal-foundry'
-        ? buildCanalFoundry(ctx)
-        : buildSkylineMarket(ctx);
+  const spawns = isBr
+    ? buildBattleRoyale(ctx, customMode!)
+    : isCustom
+      ? buildCustomArena(ctx, customMode!)
+      : isBlank
+        ? buildBlankExpanse(ctx)
+        : id === 'canal-foundry'
+          ? buildCanalFoundry(ctx)
+          : buildSkylineMarket(ctx);
   root.updateMatrixWorld(true);
   const paintables: THREE.Mesh[] = [];
   root.traverse(object => {
@@ -381,8 +449,10 @@ export function createArena(scene: THREE.Scene, id: ArenaId, customMode?: Custom
       paintables.push(object);
     }
   });
-  const teamSize = isCustom ? customMode!.teamSize : isBlank ? 10 : 4;
-  const teams = isCustom ? TEAM_ORDER.slice(0, customMode!.teamCount) : ['cyan', 'orange'] as Team[];
+  const teamSize = isBr ? customMode!.teamSize : isCustom ? customMode!.teamSize : isBlank ? 10 : 4;
+  const teams = isBr
+    ? TEAM_ORDER.slice(0, customMode!.teamCount)
+    : isCustom ? TEAM_ORDER.slice(0, customMode!.teamCount) : ['cyan', 'orange'] as Team[];
   return {
     id,
     root,
@@ -391,7 +461,7 @@ export function createArena(scene: THREE.Scene, id: ArenaId, customMode?: Custom
     walkables: ctx.walkables,
     spawns,
     teams,
-    worldSize: isCustom ? customMode!.worldSize : 72,
+    worldSize: isBr ? BR_WORLD_SIZE : isCustom ? customMode!.worldSize : 72,
     teamSize
   };
 }

@@ -1,4 +1,4 @@
-import { ARENAS, ArenaId, CustomRules, DEFAULT_SAVE, Difficulty, HAIRSTYLES, OutfitSpec, OUTFITS, SaveData, TEAM_COLORS, TEAM_ORDER, Team, WEAPONS, WeaponId } from '../game/config';
+import { ARENAS, ArenaId, BR_DEFAULT_PLAYERS, BR_PLAYER_OPTIONS, BR_TEAM_OPTIONS, CustomRules, DEFAULT_SAVE, Difficulty, HAIRSTYLES, OutfitSpec, OUTFITS, SaveData, TEAM_COLORS, TEAM_ORDER, Team, WEAPONS, WeaponId } from '../game/config';
 import { GameStats } from '../game/game';
 import { LiveCommandProcessor, LiveProfile, LiveRoomState, createDemoMessage } from '../live/live';
 
@@ -13,6 +13,8 @@ export interface UIActions {
   liveStart: (profiles: LiveProfile[], room: LiveRoomState, live: LiveCommandProcessor) => void;
   /** Apply a camera change to the running match. */
   setViewMode?: (mode: 'first' | 'third') => void;
+  /** Drop into a battle royale match with the chosen headcount. */
+  startBattleRoyale?: (options: { players: number; teams: number }) => void;
   saveChanged: (save: SaveData) => void;
 }
 
@@ -23,6 +25,7 @@ export class GameUI {
   private stats?: GameStats;
   private previousHealth = 100;
   private liveMode = false;
+  private brMode = false;
   private liveProcessor?: LiveCommandProcessor;
   private liveEventUnsubscribe?: () => boolean;
   private endingReveal = false;
@@ -79,6 +82,7 @@ export class GameUI {
               <button class="secondary-btn" data-action="spectate"><span>上帝视角观战</span><small>AI VS AI</small></button>
               <button class="secondary-btn" data-action="loadout"><span>装备工坊</span><small>LOADOUT</small></button>
               <button class="secondary-btn live-entry" data-action="live"><span>直播中心</span><small>DANMAKU LIVE</small></button>
+              <button class="secondary-btn br-entry" data-action="battle-royale"><span>大逃杀</span><small>20-50 PLAYERS</small></button>
             </div>
             <div class="control-tip desktop-only"><kbd>WASD</kbd> 移动　<kbd>空格</kbd> 跳跃　<kbd>鼠标</kbd> 瞄准　<kbd>左键</kbd> 喷涂　<kbd>Q</kbd> 水气球　<kbd>Shift</kbd> 潜入己方墨水</div>
           </section>
@@ -306,9 +310,10 @@ export class GameUI {
     modal.querySelector<HTMLElement>('[data-quit]')?.addEventListener('click', () => { close(); this.actions.quitGame(); });
   }
 
-  showGameShell(spectating = false, liveMode = false, liveProcessor?: LiveCommandProcessor) {
+  showGameShell(spectating = false, liveMode = false, liveProcessor?: LiveCommandProcessor, brMode = false) {
     this.screen = 'game';
     this.liveMode = liveMode;
+    this.brMode = brMode;
     this.liveProcessor = liveProcessor;
     this.spectating = spectating;
     const weapon = WEAPONS.find(w => w.id === this.save.weapon)!;
@@ -325,6 +330,7 @@ export class GameUI {
           <div class="timer" aria-label="剩余时间">${liveMode ? `<span class="live-hud-room">LIVE · ${liveProcessor?.state.roomCode ?? 'ROOM'}</span>` : ''}${this.timerGlyph()}${this.svgDigits(liveMode ? '2:00' : '2:30', { fill: '#ffffff', className: 'hud-digits time-digits', dataAttr: 'data-time' })}</div>
         </header>
         <div class="turf-meter multi-team-meter">${teamMeters}</div>
+        ${brMode ? `<div class="br-hud" aria-label="大逃杀状态"><span class="br-survivor">${this.survivorIcon()}</span>${this.svgDigits('00', { fill: '#b8ff3d', className: 'hud-digits br-alive-digits', dataAttr: 'data-br-alive' })}</div><div class="br-zone-warning" data-br-warning>${this.zoneDangerIcon()}</div>` : ''}
         <div class="crosshair"><i></i><i></i><i></i><i></i><b data-hitmarker></b></div>
         <div class="damage-vignette" data-damage-vignette></div>
         ${liveMode ? `<aside class="live-hud-panel"><div class="live-hud-line"><span class="live-dot"></span><b>LIVE</b><em data-live-hud-viewers>${liveProcessor?.state.viewers ?? 1}人</em></div><div class="live-hud-roster" data-live-hud-roster></div><div class="live-hud-feed" data-live-hud-feed></div><div class="live-hud-gifts">礼物强化 <b data-live-hud-power>0</b></div><details open class="live-hud-controls"><summary>主播控制</summary><div class="live-hud-compose"><input data-live-hud-command placeholder="发送弹幕"/><button data-live-hud-send>发送</button></div><div class="live-hud-connect"><input data-live-hud-url placeholder="弹幕 WebSocket"/><button data-live-hud-connect>接入</button></div></details></aside>` : ''}
@@ -424,6 +430,10 @@ export class GameUI {
     this.updateDigits(q<SVGSVGElement>('[data-ammo-text]'), `${Math.round(stats.ammo)}`);
     const ammoRatio = Math.max(0, Math.min(100, stats.ammo)) / 100;
     q<SVGCircleElement>('[data-ammo-ring]')!.style.strokeDashoffset = `${264 - 264 * ammoRatio}`;
+    if (stats.brMode) {
+      this.updateDigits(q<SVGSVGElement>('[data-br-alive]'), String(stats.aliveCount ?? 0).padStart(2, '0'));
+      q<HTMLElement>('[data-br-warning]')?.classList.toggle('show', Boolean(stats.outsideZone));
+    }
     this.updateDigits(q<SVGSVGElement>('[data-health]'), `${Math.max(0, Math.round(stats.health))}`);
     q<SVGCircleElement>('[data-health-ring]')?.style.setProperty('strokeDashoffset', `${264 - 264 * Math.max(0, stats.health) / 100}`);
     if (!this.spectating) this.updateDigits(q<SVGSVGElement>('[data-score]'), Math.round(stats.score).toString().padStart(4, '0'));
@@ -594,6 +604,14 @@ export class GameUI {
     return `<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M9 35 C0 21 17 9 28 17 C37 1 55 13 51 28 C68 38 49 60 34 51 C22 64 4 51 9 35 Z" fill="#b8ff3d" stroke="#07131f" stroke-width="4"/><path d="M22 24 L42 44 M42 24 L22 44" stroke="#07131f" stroke-width="7" stroke-linecap="round"/></svg>`;
   }
 
+  private survivorIcon(): string {
+    return `<svg viewBox="0 0 40 40" aria-hidden="true"><circle cx="20" cy="12" r="7" fill="#b8ff3d" stroke="#07131f" stroke-width="3"/><path d="M7 37c0-8 6-13 13-13s13 5 13 13z" fill="#b8ff3d" stroke="#07131f" stroke-width="3"/></svg>`;
+  }
+
+  private zoneDangerIcon(): string {
+    return `<svg viewBox="0 0 64 64" aria-hidden="true"><path d="M32 7 L59 53 H5 Z" fill="#ff2c50" stroke="#07131f" stroke-width="4" stroke-linejoin="round"/><path d="M32 23 V38" stroke="#07131f" stroke-width="6" stroke-linecap="round"/><circle cx="32" cy="46" r="3.6" fill="#07131f"/></svg>`;
+  }
+
   private outfitMeta(outfit: OutfitSpec) {
     const style = { hoodie: '卫衣', jacket: '夹克', jersey: '球衣', coat: '风衣' }[outfit.style];
     const bottoms = { shorts: '短裤', skirt: '裙装', pants: '长裤' }[outfit.bottoms];
@@ -608,11 +626,47 @@ export class GameUI {
     this.root.querySelector<HTMLElement>('[data-action="back"]')?.addEventListener('click', this.showHome.bind(this));
     this.root.querySelector<HTMLElement>('[data-action="loadout"]')?.addEventListener('click', this.showLoadout.bind(this));
     this.root.querySelector<HTMLElement>('[data-action="live"]')?.addEventListener('click', () => this.startLiveDirect());
+    this.root.querySelector<HTMLElement>('[data-action="battle-royale"]')?.addEventListener('click', () => this.showBattleRoyaleSetup());
     this.root.querySelector<HTMLElement>('[data-action="settings"]')?.addEventListener('click', () => this.showSettings());
   }
 
   private startLiveDirect() {
     this.showLiveSetup();
+  }
+
+  /** Battle royale briefing: pick the headcount and squad count before dropping in. */
+  showBattleRoyaleSetup() {
+    this.screen = 'settings';
+    const players = this.save.brPlayers ?? BR_DEFAULT_PLAYERS;
+    const teams = this.save.brTeams ?? 4;
+    const modal = document.createElement('div');
+    modal.className = 'modal-layer';
+    modal.innerHTML = `<div class="settings-modal glass">
+      <button class="modal-close">×</button><small>BATTLE ROYALE</small><h2>霓虹禁区</h2>
+      <div class="settings-grid">
+        <label><span>参战人数<em>超级大地图上 20～50 人同场</em></span><select data-br="players">${BR_PLAYER_OPTIONS.map(value => `<option value="${value}" ${value === players ? 'selected' : ''}>${value} 人</option>`).join('')}</select></label>
+        <label><span>队伍数量<em>最后存活的一队获胜</em></span><select data-br="teams">${BR_TEAM_OPTIONS.map(value => `<option value="${value}" ${value === teams ? 'selected' : ''}>${value} 队</option>`).join('')}</select></label>
+      </div>
+      <div class="settings-note"><b>生存规则</b><p>安全区会不断收缩，待在圈外会持续掉血。淘汰后无法复活，活到最后的一队拿下胜利。</p></div>
+      <button class="primary-btn huge" data-br-start><span>空降战场</span><small>${players} PLAYERS</small><b>→</b></button>
+    </div>`;
+    this.root.appendChild(modal);
+    const close = () => { modal.remove(); this.screen = 'home'; };
+    modal.querySelector<HTMLElement>('.modal-close')!.onclick = close;
+    modal.onclick = event => { if (event.target === modal) close(); };
+    const summary = () => {
+      this.save.brPlayers = Number((modal.querySelector('[data-br="players"]') as HTMLSelectElement).value);
+      this.save.brTeams = Number((modal.querySelector('[data-br="teams"]') as HTMLSelectElement).value);
+      const button = modal.querySelector<HTMLElement>('[data-br-start] small');
+      if (button) button.textContent = `${this.save.brPlayers} PLAYERS · ${this.save.brTeams} SQUADS`;
+    };
+    modal.querySelectorAll('[data-br]').forEach(control => control.addEventListener('change', summary));
+    modal.querySelector<HTMLElement>('[data-br-start]')!.onclick = () => {
+      summary();
+      this.persist();
+      modal.remove();
+      this.actions.startBattleRoyale?.({ players: this.save.brPlayers, teams: this.save.brTeams });
+    };
   }
 
   private showLiveSetup() {

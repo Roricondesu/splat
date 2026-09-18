@@ -80,6 +80,9 @@ interface FighterRig {
   ring: THREE.Mesh;
   inkStain: THREE.Mesh;
   nameplate?: THREE.Sprite;
+  /** Small cosmetic parts (eyes, face marks) hidden for distant fighters. */
+  farDetail: THREE.Object3D[];
+  farDetailVisible: boolean;
 }
 
 const BASE_VISUAL_SCALE_XZ = 0.78;
@@ -393,6 +396,9 @@ export function createFighter(
   const leftEye = makeEye(-1);
   const rightEye = makeEye(1);
   head.add(leftEye, rightEye);
+  // Eyes and face marks are the cheapest thing to drop at range: together they are
+  // about half of a fighter's draw calls and read as nothing once far away.
+  const farDetail: THREE.Object3D[] = [leftEye, rightEye];
 
   // Original two-stripe face paint under the eyes.
   for (const side of [-1, 1]) {
@@ -405,16 +411,19 @@ export function createFighter(
     cheek.scale.set(1, 0.45, 0.25);
     cheek.position.set(side * 0.36, -0.14, 0.44);
     head.add(cheek);
+    farDetail.push(stripe, cheek);
   }
   // Open happy smile.
   const smile = new THREE.Mesh(new THREE.SphereGeometry(0.085, 10, 6), darkMat);
   smile.scale.set(1.15, 0.55, 0.3);
   smile.position.set(0, -0.13, 0.475);
   head.add(smile);
+  farDetail.push(smile);
   const tongue = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 5), new THREE.MeshBasicMaterial({ color: 0xff8fa0 }));
   tongue.scale.set(1.1, 0.5, 0.3);
   tongue.position.set(0, -0.155, 0.485);
   head.add(tongue);
+  farDetail.push(tongue);
 
   // Team-ink anime hair: every hairstyle uses the fighter's current team color.
   const hair = new THREE.Group();
@@ -587,7 +596,7 @@ export function createFighter(
     group.add(createNameplate(displayName, team));
   }
   group.userData.fighterId = id;
-  group.userData.rig = { visual, torso, head, hair, leftEye, rightEye, leftArm, rightArm, leftLeg, rightLeg, weapon, backpack, tankInk, blobShadow, ring, inkStain } satisfies FighterRig;
+  group.userData.rig = { visual, torso, head, hair, leftEye, rightEye, leftArm, rightArm, leftLeg, rightLeg, weapon, backpack, tankInk, blobShadow, ring, inkStain, farDetail, farDetailVisible: true } satisfies FighterRig;
 
   return {
     id,
@@ -693,6 +702,14 @@ export function animateElimination(fighter: Fighter, dt: number) {
 
   (rig.inkStain.material as THREE.MeshPhysicalMaterial).opacity = fighter.inkStain * 0.62;
   rig.inkStain.rotation.y += dt * 0.32;
+}
+
+/** Blink and breathing detail is skipped for fighters that are far from the camera. */
+export function setFighterFarDetail(fighter: Fighter, visible: boolean) {
+  const rig = fighter.group.userData.rig as FighterRig;
+  if (rig.farDetailVisible === visible) return;
+  rig.farDetailVisible = visible;
+  for (const part of rig.farDetail) part.visible = visible;
 }
 
 export function resetFighterPose(fighter: Fighter) {

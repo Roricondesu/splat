@@ -2,7 +2,7 @@ export type Team = 'cyan' | 'orange' | 'lime' | 'purple' | 'pink' | 'yellow';
 export const TEAM_ORDER: Team[] = ['cyan', 'orange', 'lime', 'purple', 'pink', 'yellow'];
 export type WeaponId = 'pulse' | 'roller' | 'bucket' | 'burst' | 'charger' | 'scatter' | 'brush' | 'umbrella';
 export type Difficulty = 'casual' | 'standard' | 'expert';
-export type ArenaId = 'skyline-market' | 'canal-foundry' | 'blank-expanse' | 'custom';
+export type ArenaId = 'skyline-market' | 'canal-foundry' | 'blank-expanse' | 'battle-royale' | 'custom';
 
 export type CustomBlockKind = 'low' | 'high' | 'tower';
 export interface CustomBlock {
@@ -32,8 +32,15 @@ export const ARENAS: Array<{ id: ArenaId; name: string; subtitle: string; teamSi
   { id: 'skyline-market', name: '云顶集市', subtitle: '屋顶露台与空中连廊', teamSize: 4 },
   { id: 'canal-foundry', name: '潮汐铸造厂', subtitle: '运河、厂房与双层管线', teamSize: 4 },
   { id: 'blank-expanse', name: '空白广域场', subtitle: '无障碍超大平地 · 10V10', teamSize: 10 },
+  { id: 'battle-royale', name: '霓虹禁区', subtitle: '超大战场 · 20～50 人 · 安全区收缩', teamSize: 10 },
   { id: 'custom', name: '自定义战场', subtitle: '自由尺寸、方块与多队规则', teamSize: 2 }
 ];
+
+/** Battle royale tuning: one huge arena, a shrinking safe zone and no respawns. */
+export const BR_WORLD_SIZE = 180;
+export const BR_PLAYER_OPTIONS = [20, 30, 40, 50];
+export const BR_DEFAULT_PLAYERS = 30;
+export const BR_TEAM_OPTIONS = [2, 3, 4, 5, 6];
 
 export const TEAM_COLORS = {
   cyan: { main: 0x10d9d0, light: 0x8cfff5, dark: 0x007e85, css: '#16e0d0', name: '青蓝' },
@@ -146,6 +153,9 @@ export interface SaveData {
   joystickMode: 'fixed' | 'floating';
   /** Battle camera: third-person follow or first-person eyes. */
   viewMode: 'third' | 'first';
+  /** Battle royale roster: total fighters on the field (20-50) and squad count. */
+  brPlayers: number;
+  brTeams: number;
   infiniteInk: boolean;
   infiniteHealth: boolean;
   customMode: CustomModeConfig;
@@ -183,6 +193,8 @@ export const DEFAULT_SAVE: SaveData = {
   arena: 'skyline-market',
   joystickMode: 'fixed',
   viewMode: 'third',
+  brPlayers: BR_DEFAULT_PLAYERS,
+  brTeams: 4,
   infiniteInk: false,
   infiniteHealth: false,
   customMode: DEFAULT_CUSTOM_MODE,
