@@ -26,6 +26,8 @@ export class GameUI {
   private previousHealth = 100;
   private liveMode = false;
   private brMode = false;
+  /** Teams the in-game HUD is currently drawn for. */
+  private renderedTeams: Team[] = [];
   private liveProcessor?: LiveCommandProcessor;
   private liveEventUnsubscribe?: () => boolean;
   private endingReveal = false;
@@ -310,19 +312,22 @@ export class GameUI {
     modal.querySelector<HTMLElement>('[data-quit]')?.addEventListener('click', () => { close(); this.actions.quitGame(); });
   }
 
-  showGameShell(spectating = false, liveMode = false, liveProcessor?: LiveCommandProcessor, brMode = false) {
+  showGameShell(spectating = false, liveMode = false, liveProcessor?: LiveCommandProcessor, brMode = false, brTeams = 0) {
     this.screen = 'game';
     this.liveMode = liveMode;
     this.brMode = brMode;
     this.liveProcessor = liveProcessor;
     this.spectating = spectating;
     const weapon = WEAPONS.find(w => w.id === this.save.weapon)!;
-    const activeTeams = liveMode ? TEAM_ORDER.slice(0, liveProcessor?.state.liveTeams ?? 4) : this.currentTeams();
+    const activeTeams = liveMode
+      ? TEAM_ORDER.slice(0, liveProcessor?.state.liveTeams ?? 4)
+      : brMode && brTeams > 0 ? TEAM_ORDER.slice(0, brTeams) : this.currentTeams();
+    this.renderedTeams = [...activeTeams];
     const crowdedTeams = activeTeams.length > 4;
-    const teamHud = activeTeams.map(team => `<div class="team-score team-${team}" aria-label="${TEAM_COLORS[team].name}队">${this.teamMark(TEAM_COLORS[team].css)}${liveMode ? this.svgDigits('0%', { fill: '#07131f', stroke: '#07131f', className: 'hud-digits team-pct-digits', dataAttr: `data-team-percent="${team}"` }) : ''}</div>`).join('');
+    const teamHud = this.teamScoreMarkup(activeTeams);
     const teamMeters = activeTeams.map(team => `<i data-team-meter="${team}" style="background:${TEAM_COLORS[team].css};width:0%"></i>`).join('');
     this.root.innerHTML = `
-      <div class="screen game-screen ${liveMode ? 'live-game-screen' : ''}">
+      <div class="screen game-screen ${liveMode ? 'live-game-screen' : ''} ${activeTeams.length > 2 ? 'multi-team-hud' : ''}">
         <canvas id="game-canvas"></canvas>
         <div class="game-vignette"></div>
         <header class="hud-top ${crowdedTeams ? 'crowded-teams' : ''}" aria-label="对战状态">
@@ -410,6 +415,7 @@ export class GameUI {
 
   updateStats(stats: GameStats) {
     this.stats = stats;
+    if (stats.activeTeams?.length) this.syncTeamHud(stats.activeTeams);
     if (this.liveMode && this.liveProcessor) {
       const current = this.liveProcessor.state;
       const viewer = this.root.querySelector<HTMLElement>('[data-live-hud-viewers]');
@@ -464,7 +470,7 @@ export class GameUI {
   showResult(stats: GameStats & { won: boolean; kills: number; ranking?: Team[] }) {
     this.screen = 'result';
     this.save.matches++; if (stats.won) this.save.wins++; const reward = 180 + Math.round(stats.score * 0.2); this.save.coins += reward; this.persist();
-    const teams = this.currentTeams();
+    const teams = stats.activeTeams?.length ? stats.activeTeams : this.currentTeams();
     const rankOrder = stats.ranking?.length ? stats.ranking : [...teams].sort((a, b) => (stats.teams?.[b] ?? 0) - (stats.teams?.[a] ?? 0));
     const resultRows = rankOrder.map((team, index) => `<div class="result-team team-${team}" style="--team-color:${TEAM_COLORS[team].css}"><strong class="rank-number">${index + 1}</strong><span>${TEAM_COLORS[team].name}队</span><b>${(stats.teams?.[team] ?? (team === 'cyan' ? stats.cyan : stats.orange)).toFixed(1)}<small>%</small></b><i style="width:${stats.teams?.[team] ?? (team === 'cyan' ? stats.cyan : stats.orange)}%"></i></div>`).join('');
     this.root.innerHTML = `<div class="screen result-screen ${stats.won ? 'won' : 'lost'}">
@@ -705,9 +711,40 @@ export class GameUI {
     </aside><button class="live-help-open" data-live-help-open aria-label="打开弹幕指令手册">?</button>`;
   }
 
-  private currentTeams() {
+  /**
+   * Team chips for the top HUD. Multi-team matches also print each squad's share,
+   * because colour alone stops being readable past two teams.
+   */
+  private teamScoreMarkup(teams: Team[]) {
+    const showPercent = teams.length > 2;
+    return teams.map(team => `<div class="team-score team-${team}" aria-label="${TEAM_COLORS[team].name}队">${this.teamMark(TEAM_COLORS[team].css)}${showPercent ? this.svgDigits('0%', { fill: '#07131f', stroke: '#07131f', className: 'hud-digits team-pct-digits', dataAttr: `data-team-percent="${team}"` }) : ''}</div>`).join('');
+  }
+
+  /**
+   * The match, not the lobby settings, decides which squads exist. Rebuild the team
+   * HUD once the game reports its real roster so battle royale and custom matches
+   * show every colour instead of the default two.
+   */
+  private syncTeamHud(teams: Team[]) {
+    if (!teams.length) return;
+    const unchanged = teams.length === this.renderedTeams.length && teams.every((team, index) => team === this.renderedTeams[index]);
+    if (unchanged) return;
+    this.renderedTeams = [...teams];
+    const header = this.root.querySelector<HTMLElement>('.hud-top');
+    const timer = header?.querySelector<HTMLElement>('.timer');
+    if (header && timer) {
+      header.querySelectorAll('.team-score').forEach(node => node.remove());
+      timer.insertAdjacentHTML('beforebegin', this.teamScoreMarkup(teams));
+      header.classList.toggle('crowded-teams', teams.length > 4);
+    }
+    const meter = this.root.querySelector<HTMLElement>('.turf-meter');
+    if (meter) meter.innerHTML = teams.map(team => `<i data-team-meter="${team}" style="background:${TEAM_COLORS[team].css};width:0%"></i>`).join('');
+    this.root.querySelector('.game-screen')?.classList.toggle('multi-team-hud', teams.length > 2);
+  }
+
+  private currentTeams(): Team[] {
     if (this.save.arena === 'custom') return TEAM_ORDER.slice(0, this.save.customMode.teamCount);
-    return ['cyan', 'orange'] as const;
+    return ['cyan', 'orange'];
   }
 
   private characterPreview(primary: string, accent: string, hairstyle: SaveData['hairstyle'], large = false) {

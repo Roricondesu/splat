@@ -26,7 +26,7 @@ latestSave = ui.save;
 
 function beginGame(spectating = false, liveProfiles: LiveProfile[] = [], liveRoom?: LiveRoomState, live?: LiveCommandProcessor, brOptions?: { players: number; teams: number }) {
   game?.dispose();
-  const canvas = ui.showGameShell(spectating, Boolean(live), live, Boolean(brOptions));
+  const canvas = ui.showGameShell(spectating, Boolean(live), live, Boolean(brOptions), brOptions?.teams ?? 0);
   game = new NeonGame(canvas, { ...latestSave }, {
     onStats: stats => ui.updateStats(stats),
     onHit: (damage, eliminated) => ui.showHitmarker(damage, eliminated),

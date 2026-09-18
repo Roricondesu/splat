@@ -31,11 +31,15 @@ if (opened?.worldSize !== 180) failures.push(`expected the super map (180), got 
 if (opened?.aliveCount !== 30) failures.push(`expected 30 alive at drop, got ${opened?.aliveCount}`);
 if (opened?.sandbox?.length !== 4) failures.push(`expected 4 team colours, got ${opened?.sandbox?.length}`);
 
-// 3) HUD shows the survivor count.
+// 3) HUD shows the survivor count and every squad colour in the share bar.
 const hud = await page.locator('.br-hud').count();
 if (hud !== 1) failures.push(`battle royale HUD missing (${hud})`);
 const aliveDigits = await page.locator('[data-br-alive]').getAttribute('data-value');
 if (aliveDigits !== '30') failures.push(`survivor counter wrong: ${aliveDigits}`);
+const meterSegments = await page.locator('.turf-meter [data-team-meter]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-team-meter')));
+if (meterSegments.length !== 4) failures.push(`share bar should show 4 squad colours, got ${JSON.stringify(meterSegments)}`);
+const chipSegments = await page.locator('.hud-top .team-score').count();
+if (chipSegments !== 4) failures.push(`top HUD should show 4 squad chips, got ${chipSegments}`);
 
 // 4) The zone collapses and burns whoever is outside it.
 await page.evaluate(() => window.__neonDebug?.collapseZone());
@@ -70,6 +74,6 @@ if (!ended?.ending) failures.push('match did not end when one squad remained');
 
 if (errors.length) failures.push(`runtime errors: ${errors.join(' | ')}`);
 
-console.log(JSON.stringify({ opened, collapsed, burnedHealth: burnedPlayer?.health, deadStayDead, wipe, ending: ended?.ending, errors, failures }, null, 2));
+console.log(JSON.stringify({ opened, meterSegments, chipSegments, collapsed, burnedHealth: burnedPlayer?.health, deadStayDead, wipe, ending: ended?.ending, errors, failures }, null, 2));
 await browser.close();
 if (failures.length) process.exit(1);

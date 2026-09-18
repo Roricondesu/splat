@@ -65,6 +65,8 @@ export interface GameStats {
   weapon: WeaponSpec;
   alive: boolean;
   respawn: number;
+  /** Teams actually in play this match; the HUD uses it to draw every colour. */
+  activeTeams: Team[];
   /** Battle royale readouts. */
   brMode?: boolean;
   aliveCount?: number;
@@ -2011,6 +2013,7 @@ export class NeonGame {
       teams: endingTeams,
       health: this.player.health, ammo: this.player.ammo, score: this.spectatorMode ? 0 : this.player.score, weapon: this.player.weapon,
       alive: this.spectatorMode ? true : this.player.alive, respawn: this.spectatorMode || this.player.alive ? 0 : Math.max(0, this.player.respawnAt - performance.now() / 1000),
+      activeTeams: this.arena.teams,
       brMode: this.brMode,
       aliveCount: this.brMode ? this.aliveFighters().length : undefined,
       totalCount: this.brMode ? this.fighters.length : undefined,
@@ -2079,6 +2082,7 @@ export class NeonGame {
       weapon: this.player.weapon,
       alive: this.player.alive,
       respawn: 0,
+      activeTeams: this.arena.teams,
       won: ranked[0] === this.player.team,
       kills: this.kills,
       ranking: ranked
