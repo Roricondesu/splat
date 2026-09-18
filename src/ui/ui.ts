@@ -315,7 +315,7 @@ export class GameUI {
     const activeTeams = liveMode ? TEAM_ORDER.slice(0, liveProcessor?.state.liveTeams ?? 4) : this.currentTeams();
     const crowdedTeams = activeTeams.length > 4;
     const teamHud = activeTeams.map(team => `<div class="team-score team-${team}" aria-label="${TEAM_COLORS[team].name}队">${this.teamMark(TEAM_COLORS[team].css)}${liveMode ? this.svgDigits('0%', { fill: '#07131f', stroke: '#07131f', className: 'hud-digits team-pct-digits', dataAttr: `data-team-percent="${team}"` }) : ''}</div>`).join('');
-    const teamMeters = activeTeams.map(team => `<i data-team-meter="${team}" style="background:${TEAM_COLORS[team].css};width:${100 / activeTeams.length}%"></i>`).join('');
+    const teamMeters = activeTeams.map(team => `<i data-team-meter="${team}" style="background:${TEAM_COLORS[team].css};width:0%"></i>`).join('');
     this.root.innerHTML = `
       <div class="screen game-screen ${liveMode ? 'live-game-screen' : ''}">
         <canvas id="game-canvas"></canvas>
